@@ -18,9 +18,15 @@
 
 .PARAMETER StorageAccountResourceId
     Full Azure resource ID of the storage account for report upload.
+    Optional — when omitted, reports are saved locally to OutputPath.
 
 .PARAMETER ContainerName
     Blob container name for report upload. Defaults to "model-discovery-reports".
+    Only used when StorageAccountResourceId is provided.
+
+.PARAMETER OutputPath
+    Local directory for report output when StorageAccountResourceId is not provided.
+    Defaults to "./output".
 #>
 
 #region Parameters
