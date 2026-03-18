@@ -20,16 +20,34 @@ Model Hunter discovers all deployed Azure AI Foundry and OpenAI models across Az
    cd Model-Hunter
    ```
 
-2. Deploy the infrastructure:
+2. Configure your variables:
 
    ```bash
    cd infra
+   cp terraform.tfvars.sample terraform.tfvars
+   ```
+
+   Edit `terraform.tfvars` with your values — subscription IDs, resource names, schedule, and tags.
+
+3. Deploy the infrastructure:
+
+   ```bash
    terraform init
-   terraform plan
+   terraform plan     # Review changes before applying
    terraform apply
    ```
 
-3. The Runbook runs on schedule via Azure Automation. No further action is required after deployment.
+4. The Runbook runs automatically on the configured schedule (default: monthly). No further action is required after deployment.
+
+## Schedule Configuration
+
+The Runbook schedule is configurable via `terraform.tfvars`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `schedule_frequency` | `Month` | `Day`, `Week`, or `Month` |
+| `schedule_interval` | `1` | Run every N days/weeks/months |
+| `schedule_start_time` | — | ISO 8601 datetime for the first run (e.g., `2026-04-01T02:00:00Z`) |
 
 ## Local Testing
 
@@ -44,8 +62,6 @@ Connect-AzAccount
 
 > **Note:** When running locally, report output is written to the `output/` directory, which is gitignored.
 
-See [`parameters.sample.json`](parameters.sample.json) for an example of the required parameter values.
-
 ## Documentation
 
 - [Architecture](docs/architecture.md) — infrastructure components, data flow, and authentication model
@@ -53,12 +69,21 @@ See [`parameters.sample.json`](parameters.sample.json) for an example of the req
 
 ## Required Azure Permissions
 
-The Automation Account's System-Assigned Managed Identity requires the following role assignments:
+### Terraform Deployer
+
+The user or service principal running `terraform apply` needs:
+
+| Role | Scope | Purpose |
+|---|---|---|
+| **Contributor** | Resource group (or subscription) | Create Automation Account, Storage Account, Runbook |
+| **User Access Administrator** | Target subscription(s) | Create role assignments for the Managed Identity |
+
+### Runbook Managed Identity
+
+The Automation Account's System-Assigned Managed Identity requires the following role assignments (provisioned automatically by the `role-assignments` Terraform module):
 
 | Role | Scope | Purpose |
 |---|---|---|
 | **Reader** | Target subscription(s) | Read resources via Azure Resource Graph |
 | **Cost Management Reader** | Target subscription(s) | Query cost data via Cost Management API |
 | **Storage Blob Data Contributor** | Storage account | Upload CSV and HTML reports to blob storage |
-
-These role assignments are provisioned automatically by the `role_assignments` Terraform module.

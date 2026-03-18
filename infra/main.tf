@@ -28,10 +28,17 @@ module "storage_account" {
 module "runbook" {
   source = "./modules/runbook"
 
-  name                  = var.runbook_name
-  automation_account_id = module.automation_account.id
-  location              = var.location
-  tags                  = var.tags
+  name                        = var.runbook_name
+  automation_account_id       = module.automation_account.id
+  location                    = var.location
+  tags                        = var.tags
+  script_path                 = "${path.module}/../src/main.ps1"
+  schedule_frequency          = var.schedule_frequency
+  schedule_interval           = var.schedule_interval
+  schedule_start_time         = var.schedule_start_time
+  target_subscription_ids     = var.target_subscription_ids
+  storage_account_resource_id = module.storage_account.id
+  container_name              = var.container_name
 }
 
 module "role_assignments" {

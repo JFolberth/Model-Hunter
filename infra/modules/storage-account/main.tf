@@ -8,7 +8,7 @@ terraform {
 
 # https://learn.microsoft.com/azure/templates/microsoft.storage/storageaccounts
 resource "azapi_resource" "storage_account" {
-  type      = "Microsoft.Storage/storageAccounts@2023-05-01"
+  type      = "Microsoft.Storage/storageAccounts@2024-01-01"
   name      = var.name
   location  = var.location
   parent_id = var.resource_group_id
@@ -29,7 +29,7 @@ resource "azapi_resource" "storage_account" {
 
 # https://learn.microsoft.com/azure/templates/microsoft.storage/storageaccounts/blobservices/containers
 resource "azapi_resource" "blob_container" {
-  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01"
+  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2024-01-01"
   name      = var.container_name
   parent_id = "${azapi_resource.storage_account.id}/blobServices/default"
 

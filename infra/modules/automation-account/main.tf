@@ -8,7 +8,7 @@ terraform {
 
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts
 resource "azapi_resource" "automation_account" {
-  type      = "Microsoft.Automation/automationAccounts@2023-11-01"
+  type      = "Microsoft.Automation/automationAccounts@2024-10-23"
   name      = var.name
   location  = var.location
   parent_id = var.resource_group_id

@@ -41,3 +41,25 @@ variable "runbook_name" {
   type        = string
   default     = "Model-Hunter"
 }
+
+variable "schedule_frequency" {
+  description = "Schedule frequency for the Runbook: Day, Week, or Month."
+  type        = string
+  default     = "Month"
+
+  validation {
+    condition     = contains(["Day", "Week", "Month"], var.schedule_frequency)
+    error_message = "schedule_frequency must be one of: Day, Week, Month."
+  }
+}
+
+variable "schedule_interval" {
+  description = "Interval for the schedule (e.g., 1 = every 1 month if frequency is Month)."
+  type        = number
+  default     = 1
+}
+
+variable "schedule_start_time" {
+  description = "ISO 8601 datetime for the first scheduled run (e.g., 2026-04-01T02:00:00Z)."
+  type        = string
+}
