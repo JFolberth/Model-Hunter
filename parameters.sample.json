@@ -1,0 +1,5 @@
+{
+  "SubscriptionIds": ["00000000-0000-0000-0000-000000000000"],
+  "StorageAccountResourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-model-hunter/providers/Microsoft.Storage/storageAccounts/stmodelhunter",
+  "ContainerName": "model-discovery-reports"
+}

@@ -150,6 +150,8 @@ $deployments = Get-ModelDeployments -SubscriptionIds @("sub-id-1")
 $costs = Get-DeploymentCosts -SubscriptionIds @("sub-id-1")
 ```
 
+Local output is written to the `output/` directory (gitignored).
+
 ## Conventions
 
 ### Terraform
