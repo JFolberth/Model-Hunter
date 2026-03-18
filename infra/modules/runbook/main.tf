@@ -18,8 +18,8 @@ resource "azapi_resource" "runbook" {
     properties = {
       runbookType = "PowerShell72"
       description = "Model Hunter – discovers and reports on AI model deployments across subscriptions."
-      logVerbose  = false
-      logProgress = false
+      logVerbose  = true
+      logProgress = true
       draft       = {}
     }
   }

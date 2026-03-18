@@ -109,7 +109,7 @@ resources
     foreach ($account in $accountResults) {
         $accountKindMap[$account.id.ToLower()] = $account.kind
     }
-    Write-Verbose "Found $($accountResults.Count) CognitiveServices account(s)."
+    Write-Output "Found $($accountResults.Count) CognitiveServices account(s)."
 
     # Query 2: Get all CognitiveServices deployments
     $deploymentQuery = @"
@@ -118,7 +118,7 @@ resources
 | project id, name, properties, sku
 "@
 
-    Write-Verbose "Querying CognitiveServices deployments via Resource Graph..."
+    Write-Output "Querying CognitiveServices deployments via Resource Graph..."
     try {
         # https://learn.microsoft.com/powershell/module/az.resourcegraph/search-azgraph
         $deploymentResults = Search-AzGraph -Query $deploymentQuery -Subscription $SubscriptionIds -ErrorAction Stop
@@ -271,7 +271,7 @@ function Get-DeploymentCosts {
             $startDate  = $period.BillingPeriodStartDate.ToString('yyyy-MM-dd')
             $endDate    = $period.BillingPeriodEndDate.ToString('yyyy-MM-dd')
 
-            Write-Verbose "Querying costs for subscription '$subId', period '$periodName' ($startDate to $endDate)..."
+            Write-Output "Querying costs for subscription '$subId', period '$periodName' ($startDate to $endDate)..."
 
             $scope = "/subscriptions/$subId"
 
@@ -316,7 +316,7 @@ function Get-DeploymentCosts {
             }
 
             if (-not $costResult -or -not $costResult.Row) {
-                Write-Verbose "No cost rows returned for subscription '$subId', period '$periodName'."
+                Write-Output "No cost rows returned for subscription '$subId', period '$periodName'."
                 continue
             }
 
