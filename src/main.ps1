@@ -318,27 +318,13 @@ function Get-DeploymentCosts {
             $scope = "/subscriptions/$subId"
 
             # Build the filter: ServiceName dimension containing Foundry or OpenAI
-            $filterFoundry = New-AzCostManagementQueryComparisonExpressionObject `
+            # https://learn.microsoft.com/powershell/module/az.costmanagement/new-azcostmanagementquerycomparisonexpressionobject
+            $filterDimension = New-AzCostManagementQueryComparisonExpressionObject `
                 -Name 'ServiceName' `
-                -Operator 'In' `
                 -Value @('Azure AI Foundry Models', 'Azure OpenAI Service')
 
-            $filterDimension = New-AzCostManagementQueryFilterObject `
-                -Dimension $filterFoundry
-
-            # Build dataset groupings
-            $groupByResourceId = New-AzCostManagementQueryGroupingObject `
-                -Type 'Dimension' `
-                -Name 'ResourceId'
-
-            $groupByServiceName = New-AzCostManagementQueryGroupingObject `
-                -Type 'Dimension' `
-                -Name 'ServiceName'
-
-            # Build the time period
-            $timePeriod = New-AzCostManagementQueryTimePeriodObject `
-                -From $startDate `
-                -To $endDate
+            $filter = New-AzCostManagementQueryFilterObject `
+                -Dimensions $filterDimension
 
             try {
                 # https://learn.microsoft.com/powershell/module/az.costmanagement/invoke-azcostmanagementquery
@@ -346,10 +332,14 @@ function Get-DeploymentCosts {
                     -Scope $scope `
                     -Type 'ActualCost' `
                     -Timeframe 'Custom' `
-                    -TimePeriod $timePeriod `
+                    -TimePeriodFrom $startDate `
+                    -TimePeriodTo $endDate `
                     -DatasetGranularity 'None' `
-                    -DatasetGrouping @($groupByResourceId, $groupByServiceName) `
-                    -DatasetFilter $filterDimension `
+                    -DatasetGrouping @(
+                        @{ Type = 'Dimension'; Name = 'ResourceId' },
+                        @{ Type = 'Dimension'; Name = 'ServiceName' }
+                    ) `
+                    -DatasetFilter $filter `
                     -ErrorAction Stop
             }
             catch {
@@ -457,7 +447,8 @@ function Build-Report {
     $reportRows = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     foreach ($dep in $Deployments) {
-        $accountCosts = $Costs[$dep.AccountResourceId]
+        $accountKey = if ($dep.AccountResourceId) { $dep.AccountResourceId } else { '' }
+        $accountCosts = if ($accountKey -and $Costs.ContainsKey($accountKey)) { $Costs[$accountKey] } else { $null }
 
         $totalCost = [decimal]0
         $periodCosts = @{}
