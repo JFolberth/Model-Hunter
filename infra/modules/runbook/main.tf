@@ -25,15 +25,27 @@ resource "azapi_resource" "runbook" {
   }
 }
 
-# Upload the PowerShell script content to the runbook draft, then publish
-# https://learn.microsoft.com/rest/api/automation/runbook-draft/replace-content
+# Upload the PowerShell script content to the runbook draft
+# https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/runbooks/draft-content
+resource "azapi_resource_action" "runbook_draft_content" {
+  type        = "Microsoft.Automation/automationAccounts/runbooks@2024-10-23"
+  resource_id = "${azapi_resource.runbook.id}/draft/content"
+  action      = ""
+  method      = "PUT"
+  body        = file(var.script_path)
+
+  depends_on = [azapi_resource.runbook]
+}
+
+# Publish the runbook after uploading draft content
+# https://learn.microsoft.com/rest/api/automation/runbook/publish
 resource "azapi_resource_action" "runbook_publish" {
   type        = "Microsoft.Automation/automationAccounts/runbooks@2024-10-23"
   resource_id = azapi_resource.runbook.id
   action      = "publish"
   method      = "POST"
 
-  depends_on = [azapi_resource.runbook]
+  depends_on = [azapi_resource_action.runbook_draft_content]
 }
 
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/schedules
