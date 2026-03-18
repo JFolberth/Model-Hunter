@@ -7,7 +7,7 @@
       "version": "latest"
     },
     "ghcr.io/devcontainers/features/powershell:1": {
-      "version": "7.2"
+      "version": "7.4"
     },
     "ghcr.io/devcontainers/features/node:1": {
       "version": "lts"
@@ -27,7 +27,7 @@
       ],
       "settings": {
         "terraform.languageServer.enable": true,
-        "powershell.powerShellDefaultVersion": "PowerShell (7.2)",
+        "powershell.powerShellDefaultVersion": "PowerShell (7.4)",
         "editor.formatOnSave": true,
         "[terraform]": {
           "editor.defaultFormatter": "hashicorp.terraform",

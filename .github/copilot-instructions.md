@@ -28,7 +28,7 @@ The tool runs as an Azure Automation Runbook on a schedule, scanning multiple su
 │  └───────────────────────────────────────────────────────────────┘   │
 │                            │                                         │
 │  ┌─────────────────────────┘                                         │
-│  │ Runbook (PowerShell 7.2, source: src/main.ps1)                    │
+│  │ Runbook (PowerShell 7.4, source: src/main.ps1)                    │
 │  └───────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
 
@@ -165,7 +165,7 @@ Local output is written to the `output/` directory (gitignored).
 
 ### PowerShell
 
-- **PowerShell 7.2 compatibility** — all scripts must run in the Azure Automation PowerShell 7.2 runtime. Do not use features from 7.3+.
+- **PowerShell 7.4 compatibility** — all scripts must run in the Azure Automation PowerShell 7.2+ runtime. Do not use features from 7.5+.
 - **`src/main.ps1` is a single Runbook script** with functions defined inline using `#region` blocks. One file = one Runbook deployment.
 - **Function structure**: Each function within `main.ps1` is self-contained. The `#region Main Execution` block at the bottom calls them in sequence.
 - **Parameters**: Use `[CmdletBinding()]` and typed parameters with `[Parameter(Mandatory)]` where appropriate. Validate with `[ValidateNotNullOrEmpty()]`.
@@ -226,9 +226,9 @@ Do not run `terraform apply` until `validate` and `plan` succeed and the plan ou
 # Authenticate interactively
 Connect-AzAccount
 
-# Execute the full pipeline in a local PowerShell 7.2+ session
+# Execute the full pipeline in a local PowerShell 7.4+ session
 ./src/main.ps1 -SubscriptionIds @("dev-sub-id") `
   -StorageAccountResourceId "/subscriptions/.../storageAccounts/..." `
   -ContainerName "model-discovery-reports"
 ```
-Do not update the Runbook source in Azure until the script has been executed successfully in a local PowerShell 7.2+ session. The Runbook is a deployment target, not a test environment.
+Do not update the Runbook source in Azure until the script has been executed successfully in a local PowerShell 7.4+ session. The Runbook is a deployment target, not a test environment.

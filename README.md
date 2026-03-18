@@ -6,7 +6,7 @@ Model Hunter discovers all deployed Azure AI Foundry and OpenAI models across Az
 
 | Requirement | Version |
 |---|---|
-| [PowerShell](https://learn.microsoft.com/powershell/) | 7.2+ |
+| [PowerShell](https://learn.microsoft.com/powershell/) | 7.4+ |
 | Az PowerShell Modules | Az.Accounts, Az.ResourceGraph, Az.CostManagement, Az.Storage, Az.Billing |
 | [Terraform](https://www.terraform.io/) | >= 1.6 |
 | [Docker](https://www.docker.com/) | Latest (for Terraform MCP server) |

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Model Hunter is deployed entirely through Terraform (using the `azapi` provider — no `azurerm`) and runs as a PowerShell 7.2 Runbook inside Azure Automation. The infrastructure provisions the compute, storage, identity, and permissions needed for the Runbook to scan subscriptions and publish reports.
+Model Hunter is deployed entirely through Terraform (using the `azapi` provider — no `azurerm`) and runs as a PowerShell 7.4 Runbook inside Azure Automation. The infrastructure provisions the compute, storage, identity, and permissions needed for the Runbook to scan subscriptions and publish reports.
 
 ## System Diagram
 
@@ -13,7 +13,7 @@ graph TD
         AA[Automation Account<br/>System-Assigned Managed Identity]
         SA[Storage Account<br/>+ Blob Container]
         RA[Role Assignments]
-        RB[Runbook<br/>PowerShell 7.2]
+        RB[Runbook<br/>PowerShell 7.4]
     end
 
     RG --> AA
@@ -51,7 +51,7 @@ All infrastructure is defined in `infra/` and organized as one module per resour
 | `resource-group` | Resource Group | Contains all Model Hunter resources. |
 | `automation-account` | Automation Account | Hosts the Runbook with a System-Assigned Managed Identity for authentication. |
 | `storage-account` | Storage Account + Blob Container | Stores generated CSV and HTML reports in the `model-discovery-reports` container. |
-| `runbook` | Automation Runbook | PowerShell 7.2 Runbook sourced from `src/main.ps1`. Runs on a schedule. |
+| `runbook` | Automation Runbook | PowerShell 7.4 Runbook sourced from `src/main.ps1`. Runs on a schedule. |
 | `role-assignments` | Role Assignments | Grants the Managed Identity Reader, Cost Management Reader, and Storage Blob Data Contributor roles. |
 
 ## Runbook Pipeline

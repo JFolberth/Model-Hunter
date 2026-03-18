@@ -6,7 +6,7 @@
     queries cost data, and uploads CSV + HTML reports to blob storage.
 
 .DESCRIPTION
-    Azure Automation Runbook (PowerShell 7.2) that:
+    Azure Automation Runbook (PowerShell 7.4) that:
     1. Authenticates via Managed Identity
     2. Discovers all CognitiveServices deployments using Azure Resource Graph
     3. Queries Cost Management for the last 3 billing periods
