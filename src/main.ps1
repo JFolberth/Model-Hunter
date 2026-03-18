@@ -417,9 +417,12 @@ function Get-DeploymentCosts {
                     -TimePeriodFrom $startDate `
                     -TimePeriodTo $endDate `
                     -DatasetGranularity 'None' `
+                    -DatasetAggregation @{
+                        totalCost = @{ name = 'Cost'; function = 'Sum' }
+                    } `
                     -DatasetGrouping @(
-                        @{ Type = 'Dimension'; Name = 'ResourceId' },
-                        @{ Type = 'Dimension'; Name = 'MeterCategory' }
+                        @{ type = 'Dimension'; name = 'ResourceId' },
+                        @{ type = 'Dimension'; name = 'MeterCategory' }
                     ) `
                     -ErrorAction Stop
             }
