@@ -200,7 +200,7 @@ Keep docs in sync with code changes:
 - **Terraform provider version changes** → update `docs/architecture.md` and affected module docs
 - **Architecture changes** (new modules, new resources, flow changes) → update `docs/architecture.md` Mermaid diagram
 - **PowerShell module additions/changes** → update `docs/runbook-process.md`
-- **New parameters or config changes** → update `README.md` and `parameters.sample.json`
+- **New parameters or config changes** → update `README.md` and `terraform.tfvars.sample`
 - **New resource types or classification changes** → update the Resource Classification section above
 
 ### Local-first development workflow (REQUIRED)
