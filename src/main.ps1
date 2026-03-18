@@ -171,7 +171,7 @@ resources
 | project id, name, resourceGroup, subscriptionId, kind, location
 "@
 
-    Write-Verbose "Querying CognitiveServices accounts via Resource Graph..."
+    Write-Output "Querying CognitiveServices accounts via Resource Graph..."
     try {
         # https://learn.microsoft.com/powershell/module/az.resourcegraph/search-azgraph
         $accountResults = Search-AzGraph -Query $accountQuery -Subscription $SubscriptionIds -ErrorAction Stop
@@ -187,56 +187,76 @@ resources
     }
     Write-Output "Found $($accountResults.Count) CognitiveServices account(s)."
 
-    # Query 2: Get all CognitiveServices deployments
-    $deploymentQuery = @"
-resources
-| where type =~ 'microsoft.cognitiveservices/accounts/deployments'
-| project id, name, properties, sku
-"@
+    # Query 2: For each account, list deployments via ARM API
+    # Resource Graph may miss some deployment types (Global Standard, Data Zone, etc.)
+    # The ARM API is authoritative for listing all deployments under an account.
+    Write-Output "Querying deployments per account via ARM API..."
+    $allDeploymentResults = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-    Write-Output "Querying CognitiveServices deployments via Resource Graph..."
-    try {
-        # https://learn.microsoft.com/powershell/module/az.resourcegraph/search-azgraph
-        $deploymentResults = Search-AzGraph -Query $deploymentQuery -Subscription $SubscriptionIds -ErrorAction Stop
-    }
-    catch {
-        throw "Failed to query CognitiveServices deployments: $_"
+    foreach ($account in $accountResults) {
+        $accountId = $account.id
+        $acctName = $account.name
+        $acctKind = $account.kind
+        $acctRg = $account.resourceGroup
+        $acctSubId = $account.subscriptionId
+
+        Write-Output "  Listing deployments for $acctName ($acctKind)..."
+        try {
+            # https://learn.microsoft.com/rest/api/cognitiveservices/accountmanagement/deployments/list
+            $deploymentsUrl = "https://management.azure.com${accountId}/deployments?api-version=2024-10-01"
+            $response = Invoke-AzRestMethod -Uri $deploymentsUrl -Method GET -ErrorAction Stop
+
+            if ($response.StatusCode -eq 200) {
+                $deploymentsData = ($response.Content | ConvertFrom-Json).value
+                if ($deploymentsData) {
+                    foreach ($d in $deploymentsData) {
+                        $allDeploymentResults.Add([PSCustomObject]@{
+                            id                = $d.id
+                            name              = $d.name
+                            properties        = $d.properties
+                            sku               = $d.sku
+                            _accountName      = $acctName
+                            _accountKind      = $acctKind
+                            _accountId        = $accountId
+                            _resourceGroup    = $acctRg
+                            _subscriptionId   = $acctSubId
+                        })
+                    }
+                    Write-Output "    Found $($deploymentsData.Count) deployment(s)."
+                }
+                else {
+                    Write-Output "    No deployments."
+                }
+            }
+            else {
+                Write-Warning "    Failed to list deployments (HTTP $($response.StatusCode)): $($response.Content)"
+            }
+        }
+        catch {
+            Write-Warning "    Error listing deployments for '$acctName': $_"
+        }
     }
 
-    Write-Output "Found $($deploymentResults.Count) deployment(s). Parsing resource details..."
+    $deploymentResults = $allDeploymentResults.ToArray()
+    Write-Output "Found $($deploymentResults.Count) total deployment(s) across all accounts."
 
     $deployments = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     foreach ($dep in $deploymentResults) {
-        $resourceId = $dep.id
+        # Use pre-populated account context from the ARM query
+        $subId          = $dep._subscriptionId
+        $rgName         = $dep._resourceGroup
+        $accountName    = $dep._accountName
+        $accountKind    = $dep._accountKind
+        $accountResId   = $dep._accountId
+        $deploymentName = $dep.name
 
-        # Parse the resource ID to extract components
-        # Patterns:
-        #   /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{name}/projects/{project}/deployments/{deployment}
-        #   /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.CognitiveServices/accounts/{name}/deployments/{deployment}
-        $segments = $resourceId -split '/'
-
-        $subId = $null
-        $rgName = $null
-        $accountName = $null
+        # Check for project in the deployment resource ID
         $projectName = $null
-        $deploymentName = $null
-
-        for ($i = 0; $i -lt $segments.Count; $i++) {
-            switch ($segments[$i].ToLower()) {
-                'subscriptions'  { $subId          = $segments[$i + 1] }
-                'resourcegroups' { $rgName         = $segments[$i + 1] }
-                'accounts'       { $accountName    = $segments[$i + 1] }
-                'projects'       { $projectName    = $segments[$i + 1] }
-                'deployments'    { $deploymentName = $segments[$i + 1] }
-            }
+        $resourceId = $dep.id
+        if ($resourceId -match '(?i)/projects/([^/]+)') {
+            $projectName = $Matches[1]
         }
-
-        # Build the parent account resource ID for cost matching
-        $accountResourceId = "/subscriptions/$subId/resourceGroups/$rgName/providers/Microsoft.CognitiveServices/accounts/$accountName"
-
-        # Determine the account kind from our lookup
-        $accountKind = $accountKindMap[$accountResourceId.ToLower()]
 
         # Classification rules (in order):
         # 1. kind == "OpenAI" → "OpenAI Service"
@@ -245,23 +265,22 @@ resources
         if ($accountKind -eq 'OpenAI') {
             $resourceType = 'OpenAI Service'
         }
-        elseif ($resourceId -match '/projects/') {
+        elseif ($projectName) {
             $resourceType = 'Foundry (Project)'
         }
         else {
             $resourceType = 'Foundry (Hub/Legacy)'
         }
 
-        # Extract model info from properties
-        # Resource Graph may return properties as hashtable or PSObject
+        # Extract model info from properties (ARM API returns PSObject from ConvertFrom-Json)
         $modelName    = $null
         $modelVersion = $null
         $props = $dep.properties
         if ($props) {
-            $model = if ($props -is [hashtable]) { $props['model'] } else { $props.model }
+            $model = $props.model
             if ($model) {
-                $modelName    = if ($model -is [hashtable]) { $model['name'] } else { $model.name }
-                $modelVersion = if ($model -is [hashtable]) { $model['version'] } else { $model.version }
+                $modelName    = $model.name
+                $modelVersion = $model.version
             }
         }
 
@@ -270,8 +289,8 @@ resources
         $capacity = $null
         $skuObj = $dep.sku
         if ($skuObj) {
-            $skuName  = if ($skuObj -is [hashtable]) { $skuObj['name'] } else { $skuObj.name }
-            $capacity = if ($skuObj -is [hashtable]) { $skuObj['capacity'] } else { $skuObj.capacity }
+            $skuName  = $skuObj.name
+            $capacity = $skuObj.capacity
         }
 
         $subscriptionName = $subscriptionNameCache[$subId]
@@ -289,7 +308,7 @@ resources
             ModelVersion      = $modelVersion
             SKU               = $skuName
             Capacity          = $capacity
-            AccountResourceId = $accountResourceId.ToLower()
+            AccountResourceId = $accountResId.ToLower()
         })
     }
 
@@ -832,8 +851,8 @@ $endTime = Get-Date
 $duration = $endTime - $startTime
 
 # Compute summary stats
-$uniqueModels = @($deployments | Where-Object { $_.ModelName } | Select-Object -ExpandProperty ModelName -Unique)
-$uniqueSubs = @($deployments | Select-Object -ExpandProperty SubscriptionName -Unique)
+$uniqueModels = @($deployments | ForEach-Object { $_.ModelName } | Where-Object { $_ } | Select-Object -Unique)
+$uniqueSubs = @($deployments | ForEach-Object { $_.SubscriptionName } | Where-Object { $_ } | Select-Object -Unique)
 $inUseCount = 0
 $unusedCount = 0
 if ($report -and $report.CsvContent) {
