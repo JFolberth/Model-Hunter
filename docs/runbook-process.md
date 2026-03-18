@@ -1,6 +1,6 @@
 # Runbook Process
 
-This document provides a detailed walkthrough of what the Model Hunter Runbook (`src/main.ps1`) does at each step.
+This document provides a detailed walkthrough of what the Model Hunter Runbook (`src/ModelHunter.ps1`) does at each step.
 
 ## Step-by-Step Walkthrough
 

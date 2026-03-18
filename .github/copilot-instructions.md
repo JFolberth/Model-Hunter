@@ -28,7 +28,7 @@ The tool runs as an Azure Automation Runbook on a schedule, scanning multiple su
 │  └───────────────────────────────────────────────────────────────┘   │
 │                            │                                         │
 │  ┌─────────────────────────┘                                         │
-│  │ Runbook (PowerShell 7.4, source: src/main.ps1)                    │
+│  │ Runbook (PowerShell 7.4, source: src/ModelHunter.ps1)                    │
 │  └───────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────┘
 
@@ -51,7 +51,7 @@ The tool runs as an Azure Automation Runbook on a schedule, scanning multiple su
 
 ### Data flow between components
 
-1. **`main.ps1`** authenticates via Managed Identity, then calls each function in sequence, passing data forward.
+1. **`ModelHunter.ps1`** authenticates via Managed Identity, then calls each function in sequence, passing data forward.
 2. **`Get-ModelDeployments`** returns an array of deployment objects (PSCustomObject) with all parsed fields. This array is the primary data structure passed through the pipeline.
 3. **`Get-DeploymentCosts`** receives the subscription IDs, queries Cost Management, and returns a hashtable keyed by resource ID with cost-per-billing-period values.
 4. **`Build-Report`** receives both the deployments array and the cost hashtable, merges them into a unified dataset, and produces CSV and HTML strings/files.
@@ -140,14 +140,14 @@ terraform destroy -target=module.role_assignments  # Destroy a single module
 Connect-AzAccount
 
 # Run locally (reports saved to ./output/)
-./src/main.ps1 -SubscriptionIds @("sub-id-1","sub-id-2")
+./src/ModelHunter.ps1 -SubscriptionIds @("sub-id-1","sub-id-2")
 
 # Run with blob upload
-./src/main.ps1 -SubscriptionIds @("sub-id-1","sub-id-2") `
+./src/ModelHunter.ps1 -SubscriptionIds @("sub-id-1","sub-id-2") `
   -StorageAccountResourceId "/subscriptions/.../storageAccounts/myaccount"
 
 # Or dot-source to test individual functions
-. ./src/main.ps1
+. ./src/ModelHunter.ps1
 $deployments = Get-ModelDeployments -SubscriptionIds @("sub-id-1")
 $costs = Get-DeploymentCosts -SubscriptionIds @("sub-id-1")
 ```
@@ -168,8 +168,8 @@ When `-StorageAccountResourceId` is omitted, reports are saved locally to `./out
 ### PowerShell
 
 - **PowerShell 7.4 compatibility** — all scripts must run in the Azure Automation PowerShell 7.2+ runtime. Do not use features from 7.5+.
-- **`src/main.ps1` is a single Runbook script** with functions defined inline using `#region` blocks. One file = one Runbook deployment.
-- **Function structure**: Each function within `main.ps1` is self-contained. The `#region Main Execution` block at the bottom calls them in sequence.
+- **`src/ModelHunter.ps1` is a single Runbook script** with functions defined inline using `#region` blocks. One file = one Runbook deployment.
+- **Function structure**: Each function within `ModelHunter.ps1` is self-contained. The `#region Main Execution` block at the bottom calls them in sequence.
 - **Parameters**: Use `[CmdletBinding()]` and typed parameters with `[Parameter(Mandatory)]` where appropriate. Validate with `[ValidateNotNullOrEmpty()]`.
 - **Error handling**: Use `try/catch` blocks. On fatal errors, use `throw` to propagate. On non-fatal errors (e.g., one subscription fails), log with `Write-Warning` and continue.
 - **Logging**: Use `Write-Host` inside functions (avoids polluting return values — in PS 7+ Write-Host writes to Information stream, captured in Automation logs). Use `Write-Output` only in the main execution block. Use `Write-Warning` for non-fatal errors.
@@ -229,7 +229,7 @@ Do not run `terraform apply` until `validate` and `plan` succeed and the plan ou
 Connect-AzAccount
 
 # Execute the full pipeline in a local PowerShell 7.4+ session
-./src/main.ps1 -SubscriptionIds @("dev-sub-id") `
+./src/ModelHunter.ps1 -SubscriptionIds @("dev-sub-id") `
   -StorageAccountResourceId "/subscriptions/.../storageAccounts/..." `
   -ContainerName "model-discovery-reports"
 ```

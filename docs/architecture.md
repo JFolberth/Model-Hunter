@@ -51,12 +51,12 @@ All infrastructure is defined in `infra/` and organized as one module per resour
 | `resource-group` | Resource Group | Contains all Model Hunter resources. |
 | `automation-account` | Automation Account | Hosts the Runbook with a System-Assigned Managed Identity for authentication. |
 | `storage-account` | Storage Account + Blob Container | Stores generated CSV and HTML reports in the `model-discovery-reports` container. |
-| `runbook` | Automation Runbook | PowerShell 7.4 Runbook sourced from `src/main.ps1`. Runs on a schedule. |
+| `runbook` | Automation Runbook | PowerShell 7.4 Runbook sourced from `src/ModelHunter.ps1`. Runs on a schedule. |
 | `role-assignments` | Role Assignments | Grants the Managed Identity Reader, Cost Management Reader, and Storage Blob Data Contributor roles. |
 
 ## Runbook Pipeline
 
-The Runbook (`src/main.ps1`) executes a 5-step pipeline each time it runs:
+The Runbook (`src/ModelHunter.ps1`) executes a 5-step pipeline each time it runs:
 
 1. **Authenticate** — Connects to Azure using the Managed Identity (`Connect-AzAccount -Identity`).
 2. **Discover** — Queries Azure Resource Graph (`Search-AzGraph`) for all `microsoft.cognitiveservices/accounts` and their deployments across target subscriptions.

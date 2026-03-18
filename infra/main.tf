@@ -32,7 +32,7 @@ module "runbook" {
   automation_account_id       = module.automation_account.id
   location                    = var.location
   tags                        = var.tags
-  script_path                 = "${path.module}/../src/main.ps1"
+  script_path                 = "${path.module}/../src/ModelHunter.ps1"
   schedule_frequency          = var.schedule_frequency
   schedule_interval           = var.schedule_interval
   schedule_start_time         = var.schedule_start_time

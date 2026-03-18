@@ -185,7 +185,38 @@ resources
     foreach ($account in $accountResults) {
         $accountKindMap[$account.id.ToLower()] = $account.kind
     }
-    Write-Host "Found $($accountResults.Count) CognitiveServices account(s)."
+
+    # Filter to only accounts that could have AI model deployments
+    $aiAccountResults = @($accountResults | Where-Object { $_.kind -in @('AIServices', 'OpenAI') })
+    Write-Host "Found $($accountResults.Count) CognitiveServices account(s), $($aiAccountResults.Count) AI-capable (AIServices/OpenAI)."
+
+    # Query projects to map account → project names
+    # https://learn.microsoft.com/azure/templates/microsoft.cognitiveservices/accounts/projects
+    $projectQuery = @"
+resources
+| where type =~ 'microsoft.cognitiveservices/accounts/projects'
+| project id, name, subscriptionId
+"@
+    try {
+        $projectResults = Search-AzGraph -Query $projectQuery -Subscription $SubscriptionIds -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Could not query projects: $_"
+        $projectResults = @()
+    }
+
+    # Build lookup: account ID (lowercase) → array of project names
+    $accountProjectMap = @{}
+    foreach ($proj in $projectResults) {
+        if ($proj.id -match '(?i)(.*?/accounts/[^/]+)') {
+            $parentAccountId = $Matches[1].ToLower()
+            if (-not $accountProjectMap.ContainsKey($parentAccountId)) {
+                $accountProjectMap[$parentAccountId] = @()
+            }
+            $accountProjectMap[$parentAccountId] += $proj.name
+        }
+    }
+    Write-Host "Found $($projectResults.Count) project(s) across $($accountProjectMap.Count) account(s)."
 
     # Query 2: For each account, list deployments via ARM API
     # Resource Graph may miss some deployment types (Global Standard, Data Zone, etc.)
@@ -193,14 +224,14 @@ resources
     Write-Host "Querying deployments per account via ARM API..."
     $allDeploymentResults = [System.Collections.Generic.List[object]]::new()
 
-    foreach ($account in $accountResults) {
+    foreach ($account in $aiAccountResults) {
         $accountId = $account.id
         $acctName = $account.name
         $acctKind = $account.kind
         $acctRg = $account.resourceGroup
         $acctSubId = $account.subscriptionId
 
-        Write-Host "  Listing deployments for $acctName ($acctKind)..."
+        Write-Verbose "  Listing deployments for $acctName ($acctKind)..."
         try {
             # https://learn.microsoft.com/rest/api/cognitiveservices/accountmanagement/deployments/list
             $deploymentsUrl = "https://management.azure.com${accountId}/deployments?api-version=2024-10-01"
@@ -243,10 +274,10 @@ resources
                             SubscriptionId    = $acctSubId
                         })
                     }
-                    Write-Host "    Found $($deploymentsData.Count) deployment(s)."
+                    Write-Verbose "    Found $($deploymentsData.Count) deployment(s)."
                 }
                 else {
-                    Write-Host "    No deployments."
+                    Write-Verbose "    No deployments."
                 }
             }
             else {
@@ -264,16 +295,17 @@ resources
     $deployments = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     foreach ($dep in $deploymentResults) {
-        # Classification rules (in order):
-        # 1. kind == "OpenAI" → "OpenAI Service"
-        # 2. Has project name → "Foundry (Project)"
-        # 3. Otherwise → "Foundry (Hub/Legacy)"
-        $resourceType = 'Foundry (Hub/Legacy)'
+        # Look up projects for this account
+        $acctIdLower = $dep.AccountResourceId
+        $projects = if ($accountProjectMap.ContainsKey($acctIdLower)) { $accountProjectMap[$acctIdLower] } else { @() }
+        $projectNameStr = if ($projects.Count -gt 0) { $projects -join '; ' } else { $null }
+
+        # Classification:
+        # - kind == "OpenAI" → "OpenAI Service"
+        # - kind == "AIServices" → "Foundry"
+        $resourceType = 'Foundry'
         if ($dep.AccountKind -eq 'OpenAI') {
             $resourceType = 'OpenAI Service'
-        }
-        elseif ($dep.ProjectName) {
-            $resourceType = 'Foundry (Project)'
         }
 
         $subscriptionName = $subscriptionNameCache[$dep.SubscriptionId]
@@ -285,7 +317,7 @@ resources
             ResourceGroupName = $dep.ResourceGroup
             ResourceType      = $resourceType
             ResourceName      = $dep.AccountName
-            ProjectName       = $dep.ProjectName
+            ProjectName       = $projectNameStr
             DeploymentName    = $dep.DeploymentName
             ModelName         = $dep.ModelName
             ModelVersion      = $dep.ModelVersion
@@ -432,11 +464,9 @@ function Get-DeploymentCosts {
             }
 
             if (-not $costResult -or -not $costResult.Row) {
-                Write-Host "  No cost rows returned."
+                Write-Verbose "  No cost rows returned."
                 continue
             }
-
-            Write-Host "  Returned $($costResult.Row.Count) cost row(s). Columns: $($costResult.Column.Name -join ', ')"
 
             # Parse cost result columns — names vary by API version and query type
             $columns = $costResult.Column
@@ -444,33 +474,20 @@ function Get-DeploymentCosts {
             $resourceIdIndex  = -1
             $serviceNameIndex = -1
 
-            Write-Host "  Column names: $(($columns | ForEach-Object { "$($_.Name)($($_.Type))" }) -join ', ')"
-
             for ($i = 0; $i -lt $columns.Count; $i++) {
                 $colName = $columns[$i].Name.ToLower()
                 $colType = $columns[$i].Type.ToLower()
 
-                # Cost column: match by type 'number' as first column, or by common names
-                if ($colType -eq 'number' -and $costIndex -lt 0) {
-                    $costIndex = $i
-                }
-                if ($colName -match 'cost|pretaxcost|totalcost') {
-                    $costIndex = $i
-                }
-                if ($colName -match 'resourceid') {
-                    $resourceIdIndex = $i
-                }
-                if ($colName -match 'metercategory|servicename') {
-                    $serviceNameIndex = $i
-                }
+                if ($colType -eq 'number' -and $costIndex -lt 0) { $costIndex = $i }
+                if ($colName -match 'cost|pretaxcost|totalcost') { $costIndex = $i }
+                if ($colName -match 'resourceid') { $resourceIdIndex = $i }
+                if ($colName -match 'metercategory|servicename') { $serviceNameIndex = $i }
             }
 
             if ($costIndex -lt 0 -or $resourceIdIndex -lt 0) {
-                Write-Warning "Could not identify cost ($costIndex) or resourceId ($resourceIdIndex) columns for subscription '$subId', period '$periodName'. Skipping."
+                Write-Warning "Could not parse cost columns for '$periodName'. Columns: $(($columns | ForEach-Object { $_.Name }) -join ', ')"
                 continue
             }
-
-            Write-Host "  Using columns: cost=[$costIndex], resourceId=[$resourceIdIndex], service=[$serviceNameIndex]"
 
             $periodRowCount = 0
             foreach ($row in $costResult.Row) {
@@ -502,7 +519,6 @@ function Get-DeploymentCosts {
 
                 if ($costAmount -gt 0) {
                     $periodRowCount++
-                    Write-Host "    $($serviceName): `$$([math]::Round($costAmount, 2)) — $rawResourceId"
                 }
 
                 if (-not $costs.ContainsKey($accountIdLower)) {
@@ -563,17 +579,6 @@ function Build-Report {
     if (-not $Costs) { $Costs = @{} }
     if (-not $BillingPeriodNames) { $BillingPeriodNames = @() }
 
-    # Debug: show what cost keys we have vs what account IDs the deployments reference
-    if ($Costs.Count -gt 0) {
-        Write-Host "Cost data keys ($($Costs.Count)):"
-        foreach ($key in $Costs.Keys) { Write-Host "  Cost key: $key" }
-    }
-    $depAccountIds = @($Deployments | ForEach-Object { $_.AccountResourceId } | Where-Object { $_ } | Select-Object -Unique)
-    if ($depAccountIds.Count -gt 0) {
-        Write-Host "Deployment account IDs ($($depAccountIds.Count)):"
-        foreach ($aid in $depAccountIds) { Write-Host "  Account:  $aid" }
-    }
-
     $reportRows = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     foreach ($dep in $Deployments) {
@@ -617,19 +622,37 @@ function Build-Report {
         $reportRows.Add($row)
     }
 
-    # Debug: show first row to verify data
-    if ($reportRows.Count -gt 0) {
-        $first = $reportRows[0]
-        Write-Host "First report row: Sub=$($first.SubscriptionName) RG=$($first.ResourceGroup) Type=$($first.ResourceType) Res=$($first.ResourceName) Deploy=$($first.DeploymentName) Model=$($first.ModelName) InUse=$($first.IsInUse)"
-    }
+    # Compute summary statistics
+    $totalDeployments = $reportRows.Count
+    $deploymentsWithCost = @($reportRows | Where-Object { $_.IsInUse -eq $true }).Count
+    $deploymentsNoCost = $totalDeployments - $deploymentsWithCost
+    $uniqueModels = @($reportRows | ForEach-Object { $_.ModelName } | Where-Object { $_ } | Select-Object -Unique)
+    $modelsWithCost = @($reportRows | Where-Object { $_.IsInUse -eq $true } | ForEach-Object { $_.ModelName } | Where-Object { $_ } | Select-Object -Unique)
+    $uniqueAccounts = @($reportRows | ForEach-Object { $_.ResourceName } | Where-Object { $_ } | Select-Object -Unique)
+    $uniqueSubs = @($reportRows | ForEach-Object { $_.SubscriptionName } | Where-Object { $_ } | Select-Object -Unique)
+    $totalCostSum = ($reportRows | ForEach-Object { if ($_.TotalCost) { [decimal]$_.TotalCost } else { 0 } } | Measure-Object -Sum).Sum
 
-    # Generate CSV content
+    # Generate summary CSV content
+    $summaryRows = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Report Generated'; Value = $timestamp })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Subscriptions Scanned'; Value = $uniqueSubs.Count })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'AI Accounts Found'; Value = $uniqueAccounts.Count })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Total Deployments'; Value = $totalDeployments })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Deployments With Cost'; Value = $deploymentsWithCost })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Deployments Without Cost'; Value = $deploymentsNoCost })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Unique Models Deployed'; Value = $uniqueModels.Count })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Unique Models With Cost'; Value = $modelsWithCost.Count })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Total Cost (All Periods)'; Value = "`${0:N2}" -f $totalCostSum })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Billing Periods'; Value = ($BillingPeriodNames -join ', ') })
+    $summaryCsvContent = ($summaryRows | ConvertTo-Csv -NoTypeInformation) -join "`n"
+
+    # Generate detail CSV content
     $csvContent = ''
     if ($reportRows.Count -gt 0) {
         $csvContent = ($reportRows | ConvertTo-Csv -NoTypeInformation) -join "`n"
     }
 
-    # Generate HTML content
+    # Generate HTML content with summary dashboard
     $timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss UTC')
     $htmlBuilder = [System.Text.StringBuilder]::new()
     [void]$htmlBuilder.AppendLine('<!DOCTYPE html>')
@@ -638,23 +661,52 @@ function Build-Report {
     [void]$htmlBuilder.AppendLine('  <meta charset="UTF-8">')
     [void]$htmlBuilder.AppendLine("  <title>Model Hunter Report — $timestamp</title>")
     [void]$htmlBuilder.AppendLine('  <style>')
-    [void]$htmlBuilder.AppendLine('    body { font-family: Segoe UI, Arial, sans-serif; margin: 20px; background: #f9f9f9; }')
-    [void]$htmlBuilder.AppendLine('    h1 { color: #333; }')
-    [void]$htmlBuilder.AppendLine('    table { border-collapse: collapse; width: 100%; font-size: 13px; }')
-    [void]$htmlBuilder.AppendLine('    th { background: #0078d4; color: #fff; padding: 8px 10px; text-align: left; }')
-    [void]$htmlBuilder.AppendLine('    td { padding: 6px 10px; border-bottom: 1px solid #ddd; }')
-    [void]$htmlBuilder.AppendLine('    tr.in-use { background: #dff6dd; }')
-    [void]$htmlBuilder.AppendLine('    tr.unused { background: #fde7e9; }')
-    [void]$htmlBuilder.AppendLine('    tr:hover { opacity: 0.85; }')
-    [void]$htmlBuilder.AppendLine('    .summary { margin-bottom: 16px; color: #555; }')
+    [void]$htmlBuilder.AppendLine('    * { box-sizing: border-box; }')
+    [void]$htmlBuilder.AppendLine('    body { font-family: Segoe UI, Arial, sans-serif; margin: 0; padding: 20px 30px; background: #f4f6f8; color: #333; }')
+    [void]$htmlBuilder.AppendLine('    h1 { color: #1a1a2e; margin-bottom: 4px; }')
+    [void]$htmlBuilder.AppendLine('    .subtitle { color: #666; margin-bottom: 24px; font-size: 14px; }')
+    [void]$htmlBuilder.AppendLine('    .dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 28px; }')
+    [void]$htmlBuilder.AppendLine('    .card { background: #fff; border-radius: 8px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }')
+    [void]$htmlBuilder.AppendLine('    .card .label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }')
+    [void]$htmlBuilder.AppendLine('    .card .value { font-size: 28px; font-weight: 600; color: #1a1a2e; }')
+    [void]$htmlBuilder.AppendLine('    .card .value.green { color: #2e7d32; }')
+    [void]$htmlBuilder.AppendLine('    .card .value.red { color: #c62828; }')
+    [void]$htmlBuilder.AppendLine('    .card .value.blue { color: #0078d4; }')
+    [void]$htmlBuilder.AppendLine('    .card .detail { font-size: 11px; color: #999; margin-top: 4px; }')
+    [void]$htmlBuilder.AppendLine('    h2 { color: #1a1a2e; margin-top: 0; }')
+    [void]$htmlBuilder.AppendLine('    .table-container { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow-x: auto; }')
+    [void]$htmlBuilder.AppendLine('    table { border-collapse: collapse; width: 100%; font-size: 12px; }')
+    [void]$htmlBuilder.AppendLine('    th { background: #1a1a2e; color: #fff; padding: 10px 12px; text-align: left; font-weight: 500; white-space: nowrap; position: sticky; top: 0; }')
+    [void]$htmlBuilder.AppendLine('    td { padding: 8px 12px; border-bottom: 1px solid #eee; white-space: nowrap; }')
+    [void]$htmlBuilder.AppendLine('    tr.in-use { background: #f1f8e9; }')
+    [void]$htmlBuilder.AppendLine('    tr.unused { background: #fff3e0; }')
+    [void]$htmlBuilder.AppendLine('    tr:hover td { background: rgba(0,120,212,0.06); }')
+    [void]$htmlBuilder.AppendLine('    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }')
+    [void]$htmlBuilder.AppendLine('    .badge-yes { background: #e8f5e9; color: #2e7d32; }')
+    [void]$htmlBuilder.AppendLine('    .badge-no { background: #fbe9e7; color: #c62828; }')
+    [void]$htmlBuilder.AppendLine('    .cost { text-align: right; font-variant-numeric: tabular-nums; }')
     [void]$htmlBuilder.AppendLine('  </style>')
     [void]$htmlBuilder.AppendLine('</head>')
     [void]$htmlBuilder.AppendLine('<body>')
     [void]$htmlBuilder.AppendLine("  <h1>Model Hunter Report</h1>")
-    [void]$htmlBuilder.AppendLine("  <p class=`"summary`">Generated: $timestamp | Deployments: $($reportRows.Count)</p>")
+    [void]$htmlBuilder.AppendLine("  <p class=`"subtitle`">Generated: $timestamp</p>")
+
+    # Summary dashboard cards
+    [void]$htmlBuilder.AppendLine('  <div class="dashboard">')
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Total Deployments</div><div class=`"value blue`">$totalDeployments</div></div>")
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Deployments With Cost</div><div class=`"value green`">$deploymentsWithCost</div></div>")
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Deployments No Cost</div><div class=`"value red`">$deploymentsNoCost</div></div>")
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Unique Models</div><div class=`"value blue`">$($uniqueModels.Count)</div><div class=`"detail`">$($modelsWithCost.Count) with cost</div></div>")
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">AI Accounts</div><div class=`"value`">$($uniqueAccounts.Count)</div></div>")
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Total Cost</div><div class=`"value green`">`$$('{0:N2}' -f $totalCostSum)</div><div class=`"detail`">across $($BillingPeriodNames.Count) period(s)</div></div>")
+    [void]$htmlBuilder.AppendLine('  </div>')
+
+    # Deployment table
+    [void]$htmlBuilder.AppendLine('  <div class="table-container">')
+    [void]$htmlBuilder.AppendLine('  <h2>Deployment Details</h2>')
     [void]$htmlBuilder.AppendLine('  <table>')
 
-    # Header row
+    # Header row — use friendly names
     [void]$htmlBuilder.AppendLine('    <thead><tr>')
     $headerColumns = @(
         'SubscriptionName', 'ResourceGroup', 'ResourceType', 'ResourceName',
@@ -666,8 +718,27 @@ function Build-Report {
     }
     $headerColumns += 'TotalCost'
 
+    $friendlyNames = @{
+        'SubscriptionName' = 'Subscription'
+        'ResourceGroup'    = 'Resource Group'
+        'ResourceType'     = 'Type'
+        'ResourceName'     = 'Resource'
+        'ProjectName'      = 'Project'
+        'DeploymentName'   = 'Deployment'
+        'ModelName'        = 'Model'
+        'ModelVersion'     = 'Version'
+        'SKU'              = 'SKU'
+        'Capacity'         = 'Capacity'
+        'IsInUse'          = 'In Use'
+        'TotalCost'        = 'Total Cost'
+    }
+
     foreach ($col in $headerColumns) {
-        [void]$htmlBuilder.AppendLine("      <th>$col</th>")
+        $displayName = if ($friendlyNames.ContainsKey($col)) { $friendlyNames[$col] }
+                       elseif ($col -match '^Cost_(.+)$') { $Matches[1] }
+                       else { $col }
+        $align = if ($col -like 'Cost_*' -or $col -eq 'TotalCost') { ' class="cost"' } else { '' }
+        [void]$htmlBuilder.AppendLine("      <th$align>$displayName</th>")
     }
     [void]$htmlBuilder.AppendLine('    </tr></thead>')
 
@@ -679,28 +750,38 @@ function Build-Report {
         foreach ($col in $headerColumns) {
             $value = $row.$col
             if ($null -eq $value) { $value = '' }
-            # Format cost columns as currency
-            if ($col -like 'Cost_*' -or $col -eq 'TotalCost') {
-                $value = '{0:N2}' -f [decimal]$value
+
+            if ($col -eq 'IsInUse') {
+                $badgeClass = if ($value) { 'badge-yes' } else { 'badge-no' }
+                $badgeText = if ($value) { 'Yes' } else { 'No' }
+                $value = "<span class=`"badge $badgeClass`">$badgeText</span>"
+                [void]$htmlBuilder.AppendLine("      <td>$value</td>")
             }
-            # HTML-encode basic characters
-            $value = [string]$value -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
-            [void]$htmlBuilder.AppendLine("      <td>$value</td>")
+            elseif ($col -like 'Cost_*' -or $col -eq 'TotalCost') {
+                $value = '${0:N2}' -f [decimal]$value
+                [void]$htmlBuilder.AppendLine("      <td class=`"cost`">$value</td>")
+            }
+            else {
+                $value = [string]$value -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+                [void]$htmlBuilder.AppendLine("      <td>$value</td>")
+            }
         }
         [void]$htmlBuilder.AppendLine('    </tr>')
     }
     [void]$htmlBuilder.AppendLine('    </tbody>')
     [void]$htmlBuilder.AppendLine('  </table>')
+    [void]$htmlBuilder.AppendLine('  </div>')
     [void]$htmlBuilder.AppendLine('</body>')
     [void]$htmlBuilder.AppendLine('</html>')
 
     $htmlContent = $htmlBuilder.ToString()
 
-    Write-Host "Report built: $($reportRows.Count) row(s), CSV length $($csvContent.Length), HTML length $($htmlContent.Length)."
+    Write-Host "Report built: $($reportRows.Count) row(s)."
 
     return [PSCustomObject]@{
-        CsvContent  = $csvContent
-        HtmlContent = $htmlContent
+        CsvContent     = $csvContent
+        SummaryCsv     = $summaryCsvContent
+        HtmlContent    = $htmlContent
     }
 }
 #endregion Functions: Build-Report
@@ -882,15 +963,18 @@ if ($report.CsvContent -and $report.HtmlContent) {
             New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
         }
         $timestamp = (Get-Date).ToString('yyyy-MM-dd-HHmmss')
-        $csvFile  = Join-Path $OutputPath "model-discovery-$timestamp.csv"
-        $htmlFile = Join-Path $OutputPath "model-discovery-$timestamp.html"
+        $csvFile     = Join-Path $OutputPath "model-discovery-$timestamp.csv"
+        $summaryFile = Join-Path $OutputPath "model-discovery-summary-$timestamp.csv"
+        $htmlFile    = Join-Path $OutputPath "model-discovery-$timestamp.html"
 
         [System.IO.File]::WriteAllText($csvFile, $report.CsvContent)
+        [System.IO.File]::WriteAllText($summaryFile, $report.SummaryCsv)
         [System.IO.File]::WriteAllText($htmlFile, $report.HtmlContent)
 
         Write-Output "Reports saved locally:"
-        Write-Output "  CSV:  $csvFile"
-        Write-Output "  HTML: $htmlFile"
+        Write-Output "  Detail CSV:  $csvFile"
+        Write-Output "  Summary CSV: $summaryFile"
+        Write-Output "  HTML:        $htmlFile"
     }
 }
 else {
