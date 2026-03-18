@@ -6,12 +6,40 @@ Model Hunter discovers all deployed Azure AI Foundry and OpenAI models across Az
 
 | Requirement | Version |
 |---|---|
-| [Terraform](https://www.terraform.io/) | >= 1.5 |
-| [Docker](https://www.docker.com/) | Latest (for Terraform MCP server) |
 | [PowerShell](https://learn.microsoft.com/powershell/) | 7.2+ |
 | Az PowerShell Modules | Az.Accounts, Az.ResourceGraph, Az.CostManagement, Az.Storage, Az.Billing |
+| [Terraform](https://www.terraform.io/) | >= 1.6 |
+| [Docker](https://www.docker.com/) | Latest (for Terraform MCP server) |
 
-## Quick Start
+> **Tip:** Open this repo in the [Dev Container](.devcontainer/devcontainer.json) to get all prerequisites pre-installed.
+
+## Local Testing
+
+Run the discovery script locally before deploying to Azure:
+
+1. Install the required Az modules (if not using the Dev Container):
+
+   ```powershell
+   Install-Module -Name Az.Accounts, Az.ResourceGraph, Az.CostManagement, Az.Storage, Az.Billing -Force -Scope CurrentUser
+   ```
+
+2. Authenticate:
+
+   ```powershell
+   Connect-AzAccount
+   ```
+
+3. Run the script:
+
+   ```powershell
+   ./src/main.ps1 -SubscriptionIds @("sub-id") `
+     -StorageAccountResourceId "/subscriptions/.../storageAccounts/..." `
+     -ContainerName "model-discovery-reports"
+   ```
+
+> **Note:** When running locally, report output is written to the `output/` directory, which is gitignored.
+
+## Infrastructure Deployment
 
 1. Clone the repository:
 
@@ -48,19 +76,6 @@ The Runbook schedule is configurable via `terraform.tfvars`:
 | `schedule_frequency` | `Month` | `Day`, `Week`, or `Month` |
 | `schedule_interval` | `1` | Run every N days/weeks/months |
 | `schedule_start_time` | — | ISO 8601 datetime for the first run (e.g., `2026-04-01T02:00:00Z`) |
-
-## Local Testing
-
-You can run the discovery script locally against your own subscriptions:
-
-```powershell
-Connect-AzAccount
-./src/main.ps1 -SubscriptionIds @("sub-id") `
-  -StorageAccountResourceId "/subscriptions/.../storageAccounts/..." `
-  -ContainerName "model-discovery-reports"
-```
-
-> **Note:** When running locally, report output is written to the `output/` directory, which is gitignored.
 
 ## Documentation
 
