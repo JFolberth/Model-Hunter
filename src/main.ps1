@@ -250,10 +250,13 @@ function Get-DeploymentCosts {
     # Try billing periods first; fall back to last 3 calendar months if unavailable
     # (Get-AzBillingPeriod doesn't work for all account types: PAYG, MCA, etc.)
     $periods = @()
+    $costMethod = $null
     try {
         # https://learn.microsoft.com/powershell/module/az.billing/get-azbillingperiod
+        Write-Output "Attempting to retrieve Azure billing periods (preferred method)..."
         $billingPeriods = Get-AzBillingPeriod -MaxCount 3 -ErrorAction Stop
         if ($billingPeriods -and $billingPeriods.Count -gt 0) {
+            $costMethod = "BillingPeriods"
             foreach ($bp in $billingPeriods) {
                 $periods += [PSCustomObject]@{
                     Name      = $bp.Name
@@ -261,16 +264,24 @@ function Get-DeploymentCosts {
                     EndDate   = $bp.BillingPeriodEndDate.ToString('yyyy-MM-dd')
                 }
             }
-            Write-Output "Using billing periods: $($periods.Name -join ', ')"
+            Write-Output "[Cost Method: Billing Periods] Retrieved $($periods.Count) period(s): $($periods.Name -join ', ')"
+            foreach ($p in $periods) {
+                Write-Output "  - $($p.Name): $($p.StartDate) to $($p.EndDate)"
+            }
+        }
+        else {
+            Write-Output "Get-AzBillingPeriod returned no results."
         }
     }
     catch {
-        Write-Warning "Could not retrieve billing periods: $_"
+        Write-Warning "Get-AzBillingPeriod failed: $_"
     }
 
     # Fallback: generate last 3 calendar months
     if ($periods.Count -eq 0) {
-        Write-Output "Billing periods unavailable — falling back to last 3 calendar months."
+        $costMethod = "CalendarMonths"
+        Write-Output "[Cost Method: Calendar Months] Billing periods unavailable — using last 3 calendar months as fallback."
+        Write-Output "  This can happen with PAYG, MCA, or MSDN subscription types that don't expose billing periods via the API."
         $now = Get-Date
         for ($m = 0; $m -lt 3; $m++) {
             $monthStart = $now.AddMonths(-$m - 1)
@@ -284,8 +295,12 @@ function Get-DeploymentCosts {
         }
         # Sort oldest first
         $periods = $periods | Sort-Object Name
-        Write-Output "Using calendar months: $($periods.Name -join ', ')"
+        foreach ($p in $periods) {
+            Write-Output "  - $($p.Name): $($p.StartDate) to $($p.EndDate)"
+        }
     }
+
+    Write-Output "Cost query method: $costMethod | Periods: $($periods.Count)"
 
     $periodNames = @($periods | ForEach-Object { $_.Name })
 
