@@ -14,7 +14,7 @@
     },
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },
-  "postCreateCommand": "pwsh -Command \"Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; Install-Module -Name Az.Accounts, Az.ResourceGraph, Az.CostManagement, Az.Storage, Az.Billing -Force -Scope CurrentUser -AcceptLicense\"",
+  "postCreateCommand": "pwsh -Command \"Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; Install-Module -Name Az.Accounts, Az.ResourceGraph, Az.CostManagement, Az.Storage, Az.Billing, Pester -Force -Scope CurrentUser -AcceptLicense\"",
   "customizations": {
     "vscode": {
       "extensions": [

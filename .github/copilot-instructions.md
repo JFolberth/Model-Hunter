@@ -134,16 +134,25 @@ terraform plan -target=module.runbook             # Plan a single module
 terraform destroy -target=module.role_assignments  # Destroy a single module
 ```
 
+### Pester Tests
+```powershell
+# Run all tests
+Import-Module Pester -MinimumVersion 5.0; Invoke-Pester ./tests -Output Detailed
+
+# Run a single test file
+Invoke-Pester ./tests/ModelHunter.Tests.ps1 -Output Detailed
+```
+
 ### PowerShell (local testing)
 ```powershell
 # Authenticate interactively first
 Connect-AzAccount
 
 # Run locally (reports saved to ./output/)
-./src/ModelHunter.ps1 -SubscriptionIds @("sub-id-1","sub-id-2")
+./src/ModelHunter.ps1 -SubscriptionIds "sub-id-1,sub-id-2"
 
 # Run with blob upload
-./src/ModelHunter.ps1 -SubscriptionIds @("sub-id-1","sub-id-2") `
+./src/ModelHunter.ps1 -SubscriptionIds "sub-id-1,sub-id-2" `
   -StorageAccountResourceId "/subscriptions/.../storageAccounts/myaccount"
 
 # Or dot-source to test individual functions

@@ -12,7 +12,8 @@
     5. Uploads the reports to Azure Blob Storage
 
 .PARAMETER SubscriptionIds
-    Array of Azure subscription IDs to scan for model deployments.
+    Comma-separated string of Azure subscription IDs to scan.
+    Also accepts JSON array format: '["sub1","sub2"]'
 
 .PARAMETER StorageAccountResourceId
     Full Azure resource ID of the storage account for report upload.
@@ -28,12 +29,26 @@
 param(
     [Parameter(Mandatory)]
     [ValidateNotNullOrEmpty()]
-    [string[]]$SubscriptionIds,
+    [string]$SubscriptionIds,
 
     [string]$StorageAccountResourceId,
 
     [string]$ContainerName = "model-discovery-reports"
 )
+
+# Parse SubscriptionIds — accepts comma-separated string or JSON array for Azure Automation compatibility
+# Local usage: -SubscriptionIds "sub1,sub2" or -SubscriptionIds '["sub1","sub2"]'
+$SubscriptionIdList = @()
+if ($SubscriptionIds.StartsWith('[')) {
+    $SubscriptionIdList = @($SubscriptionIds | ConvertFrom-Json)
+}
+else {
+    $SubscriptionIdList = @($SubscriptionIds -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+if ($SubscriptionIdList.Count -eq 0) {
+    throw "No valid subscription IDs provided. Pass comma-separated IDs: -SubscriptionIds 'sub1,sub2'"
+}
 
 # OutputPath is only used for local runs (not exposed as a Runbook parameter)
 $OutputPath = "./output"
@@ -90,7 +105,7 @@ Write-Output "========================================="
 
 # Validate each subscription is accessible
 $validSubscriptionIds = [System.Collections.Generic.List[string]]::new()
-foreach ($subId in $SubscriptionIds) {
+foreach ($subId in $SubscriptionIdList) {
     Write-Output "Checking subscription '$subId'..."
     try {
         # https://learn.microsoft.com/powershell/module/az.accounts/get-azsubscription
@@ -107,10 +122,10 @@ if ($validSubscriptionIds.Count -eq 0) {
     throw "No accessible subscriptions found. Verify the identity has Reader access to the target subscriptions."
 }
 
-if ($validSubscriptionIds.Count -lt $SubscriptionIds.Count) {
-    Write-Warning "$($SubscriptionIds.Count - $validSubscriptionIds.Count) subscription(s) were inaccessible and will be skipped."
+if ($validSubscriptionIds.Count -lt $SubscriptionIdList.Count) {
+    Write-Warning "$($SubscriptionIdList.Count - $validSubscriptionIds.Count) subscription(s) were inaccessible and will be skipped."
 }
-$SubscriptionIds = $validSubscriptionIds.ToArray()
+$SubscriptionIdList = $validSubscriptionIds.ToArray()
 
 # Validate storage account if provided
 if ($StorageAccountResourceId) {
@@ -979,8 +994,8 @@ Write-Output ""
 Write-Output "========================================="
 Write-Output "STEP 2: Discovering Model Deployments"
 Write-Output "========================================="
-Write-Output "Scanning $($SubscriptionIds.Count) subscription(s): $($SubscriptionIds -join ', ')"
-$deployments = Get-ModelDeployments -SubscriptionIds $SubscriptionIds
+Write-Output "Scanning $($SubscriptionIdList.Count) subscription(s): $($SubscriptionIdList -join ', ')"
+$deployments = Get-ModelDeployments -SubscriptionIds $SubscriptionIdList
 
 # Show a preview of discovered deployments
 if ($deployments.Count -gt 0) {
@@ -1001,7 +1016,7 @@ Write-Output "========================================="
 # Extract unique account resource IDs from discovered deployments for cost matching
 $accountResourceIds = @($deployments | ForEach-Object { $_.AccountResourceId } | Where-Object { $_ } | Select-Object -Unique)
 Write-Output "Querying costs for $($accountResourceIds.Count) unique account(s)..."
-$costResult = Get-DeploymentCosts -SubscriptionIds $SubscriptionIds -AccountResourceIds $accountResourceIds
+$costResult = Get-DeploymentCosts -SubscriptionIds $SubscriptionIdList -AccountResourceIds $accountResourceIds
 
 $billingPeriodNames = if ($costResult.PeriodNames) { $costResult.PeriodNames } else { @() }
 $costs = if ($costResult.Costs) { $costResult.Costs } else { @{} }

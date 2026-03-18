@@ -83,12 +83,12 @@ resource "azapi_resource" "runbook" {
 
   body = {
     properties = {
-      runbookType         = "PowerShell"
-      runtimeEnvironment  = azapi_resource.runtime_environment.name
-      description         = "Model Hunter – discovers and reports on AI model deployments across subscriptions."
-      logVerbose          = true
-      logProgress         = true
-      draft               = {}
+      runbookType        = "PowerShell"
+      runtimeEnvironment = azapi_resource.runtime_environment.name
+      description        = "Model Hunter – discovers and reports on AI model deployments across subscriptions."
+      logVerbose         = true
+      logProgress        = true
+      draft              = {}
     }
   }
 
@@ -126,7 +126,7 @@ resource "terraform_data" "runbook_content" {
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/schedules
 resource "azapi_resource" "schedule" {
   type      = "Microsoft.Automation/automationAccounts/schedules@2024-10-23"
-  name      = "${var.name}-default-schedule"
+  name      = "${var.name}-default3-schedule"
   parent_id = var.automation_account_id
 
   body = {
@@ -142,8 +142,8 @@ resource "azapi_resource" "schedule" {
 
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/jobschedules
 resource "azapi_resource" "job_schedule" {
-  type      = "Microsoft.Automation/automationAccounts/jobSchedules@2024-10-23"
-  name      = format("%s-%s-%s-%s-%s",
+  type = "Microsoft.Automation/automationAccounts/jobSchedules@2024-10-23"
+  name = format("%s-%s-%s-%s-%s",
     substr(md5("${azapi_resource.runbook.name}-${azapi_resource.schedule.name}"), 0, 8),
     substr(md5("${azapi_resource.runbook.name}-${azapi_resource.schedule.name}"), 8, 4),
     substr(md5("${azapi_resource.runbook.name}-${azapi_resource.schedule.name}"), 12, 4),
