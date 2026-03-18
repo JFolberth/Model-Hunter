@@ -827,8 +827,11 @@ if ($report.CsvContent -and $report.HtmlContent) {
             -ContainerName $ContainerName
     }
     else {
-        # Local output mode
-        if (-not (Test-Path $OutputPath)) {
+        # Local output mode — clear previous results
+        if (Test-Path $OutputPath) {
+            Remove-Item "$OutputPath/*" -Force -ErrorAction SilentlyContinue
+        }
+        else {
             New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
         }
         $timestamp = (Get-Date).ToString('yyyy-MM-dd-HHmmss')
