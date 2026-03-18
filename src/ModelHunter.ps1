@@ -208,12 +208,13 @@ resources
     # Build lookup: account ID (lowercase) → array of project names
     $accountProjectMap = @{}
     foreach ($proj in $projectResults) {
-        if ($proj.id -match '(?i)(.*?/accounts/[^/]+)') {
+        if ($proj.id -match '(?i)(.*?/accounts/[^/]+)/projects/([^/]+)') {
             $parentAccountId = $Matches[1].ToLower()
+            $projectName = $Matches[2]
             if (-not $accountProjectMap.ContainsKey($parentAccountId)) {
                 $accountProjectMap[$parentAccountId] = @()
             }
-            $accountProjectMap[$parentAccountId] += $proj.name
+            $accountProjectMap[$parentAccountId] += $projectName
         }
     }
     Write-Host "Found $($projectResults.Count) project(s) across $($accountProjectMap.Count) account(s)."
