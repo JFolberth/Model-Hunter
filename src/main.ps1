@@ -210,17 +210,13 @@ resources
                 $deploymentsData = ($response.Content | ConvertFrom-Json).value
                 if ($deploymentsData) {
                     foreach ($d in $deploymentsData) {
-                        $allDeploymentResults.Add([PSCustomObject]@{
-                            id                = $d.id
-                            name              = $d.name
-                            properties        = $d.properties
-                            sku               = $d.sku
-                            _accountName      = $acctName
-                            _accountKind      = $acctKind
-                            _accountId        = $accountId
-                            _resourceGroup    = $acctRg
-                            _subscriptionId   = $acctSubId
-                        })
+                        # Add account context directly onto the deployment object
+                        $d | Add-Member -NotePropertyName '_accountName'    -NotePropertyValue $acctName    -Force
+                        $d | Add-Member -NotePropertyName '_accountKind'    -NotePropertyValue $acctKind    -Force
+                        $d | Add-Member -NotePropertyName '_accountId'      -NotePropertyValue $accountId   -Force
+                        $d | Add-Member -NotePropertyName '_resourceGroup'  -NotePropertyValue $acctRg      -Force
+                        $d | Add-Member -NotePropertyName '_subscriptionId' -NotePropertyValue $acctSubId   -Force
+                        $allDeploymentResults.Add($d)
                     }
                     Write-Output "    Found $($deploymentsData.Count) deployment(s)."
                 }
@@ -416,18 +412,9 @@ function Get-DeploymentCosts {
 
             $scope = "/subscriptions/$subId"
 
-            # Filter by the specific ResourceId values of discovered accounts
-            # This ensures we only get costs for accounts with AI model deployments,
-            # not other CognitiveServices (Speech, Vision, Language, etc.)
-            # https://learn.microsoft.com/powershell/module/az.costmanagement/new-azcostmanagementquerycomparisonexpressionobject
-            $filterDimension = New-AzCostManagementQueryComparisonExpressionObject `
-                -Name 'ResourceId' `
-                -Value $subAccountIds
-
-            $filter = New-AzCostManagementQueryFilterObject `
-                -Dimensions $filterDimension
-
             try {
+                # Query all costs grouped by ResourceId — we'll filter to our accounts in code
+                # This avoids filter mismatches with the Cost Management API
                 # https://learn.microsoft.com/powershell/module/az.costmanagement/invoke-azcostmanagementquery
                 $costResult = Invoke-AzCostManagementQuery `
                     -Scope $scope `
@@ -440,7 +427,6 @@ function Get-DeploymentCosts {
                         @{ Type = 'Dimension'; Name = 'ResourceId' },
                         @{ Type = 'Dimension'; Name = 'MeterCategory' }
                     ) `
-                    -DatasetFilter $filter `
                     -ErrorAction Stop
             }
             catch {
@@ -482,11 +468,6 @@ function Get-DeploymentCosts {
                 $rawResourceId = [string]$row[$resourceIdIndex]
                 $serviceName = if ($serviceNameIndex -ge 0) { [string]$row[$serviceNameIndex] } else { 'N/A' }
 
-                if ($costAmount -gt 0) {
-                    $periodRowCount++
-                    Write-Output "    $($serviceName): `$$([math]::Round($costAmount, 2)) — $rawResourceId"
-                }
-
                 # Normalize the resource ID to account level (strip /deployments/... and /projects/...)
                 $accountId = $rawResourceId
                 if ($accountId -match '(?i)/providers/Microsoft\.CognitiveServices/accounts/[^/]+') {
@@ -498,6 +479,21 @@ function Get-DeploymentCosts {
                     }
                 }
                 $accountIdLower = $accountId.ToLower()
+
+                # Only include costs for accounts we discovered (skip Speech, Vision, etc.)
+                $isKnownAccount = $false
+                foreach ($known in $subAccountIds) {
+                    if ($known.ToLower() -eq $accountIdLower) {
+                        $isKnownAccount = $true
+                        break
+                    }
+                }
+                if (-not $isKnownAccount) { continue }
+
+                if ($costAmount -gt 0) {
+                    $periodRowCount++
+                    Write-Output "    $($serviceName): `$$([math]::Round($costAmount, 2)) — $rawResourceId"
+                }
 
                 if (-not $costs.ContainsKey($accountIdLower)) {
                     $costs[$accountIdLower] = @{}
