@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "learn-mcp": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@microsoftdocs/learn-mcp-server"]
+    },
+    "terraform": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "hashicorp/terraform-mcp-server"]
+    }
+  }
+}
