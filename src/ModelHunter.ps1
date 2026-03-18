@@ -241,6 +241,31 @@ resources
             if ($response.StatusCode -eq 200) {
                 $deploymentsData = ($response.Content | ConvertFrom-Json).value
                 if ($deploymentsData) {
+                    # Query model lifecycle data for this account (once per account)
+                    # https://learn.microsoft.com/rest/api/cognitiveservices/accountmanagement/models/list
+                    $modelLifecycleMap = @{}
+                    try {
+                        $modelsUrl = "https://management.azure.com${accountId}/models?api-version=2024-10-01"
+                        $modelsResp = Invoke-AzRestMethod -Uri $modelsUrl -Method GET -ErrorAction Stop
+                        if ($modelsResp.StatusCode -eq 200) {
+                            $modelsData = ($modelsResp.Content | ConvertFrom-Json).value
+                            foreach ($mdl in $modelsData) {
+                                $key = "$($mdl.name)|$($mdl.version)".ToLower()
+                                $retireDate = $null
+                                if ($mdl.deprecation -and $mdl.deprecation.inference) {
+                                    $retireDate = $mdl.deprecation.inference
+                                }
+                                $modelLifecycleMap[$key] = [PSCustomObject]@{
+                                    LifecycleStatus = $mdl.lifecycleStatus
+                                    RetirementDate  = $retireDate
+                                }
+                            }
+                        }
+                    }
+                    catch {
+                        Write-Warning "    Could not query model lifecycle for '$acctName': $_"
+                    }
+
                     foreach ($d in $deploymentsData) {
                         # Extract model info directly
                         $mName = $null; $mVersion = $null
@@ -260,6 +285,12 @@ resources
                             $projName = $Matches[1]
                         }
 
+                        # Look up lifecycle info for this model+version
+                        $lifecycleKey = "$($mName)|$($mVersion)".ToLower()
+                        $lifecycle = $modelLifecycleMap[$lifecycleKey]
+                        $lifecycleStatus = if ($lifecycle) { $lifecycle.LifecycleStatus } else { $null }
+                        $retirementDate  = if ($lifecycle) { $lifecycle.RetirementDate } else { $null }
+
                         $allDeploymentResults.Add([PSCustomObject]@{
                             DeploymentId      = $d.id
                             DeploymentName    = $d.name
@@ -273,6 +304,8 @@ resources
                             AccountResourceId = $accountId.ToLower()
                             ResourceGroup     = $acctRg
                             SubscriptionId    = $acctSubId
+                            LifecycleStatus   = $lifecycleStatus
+                            RetirementDate    = $retirementDate
                         })
                     }
                     Write-Verbose "    Found $($deploymentsData.Count) deployment(s)."
@@ -324,6 +357,8 @@ resources
             ModelVersion      = $dep.ModelVersion
             SKU               = $dep.SKU
             Capacity          = $dep.Capacity
+            LifecycleStatus   = $dep.LifecycleStatus
+            RetirementDate    = $dep.RetirementDate
             AccountResourceId = $dep.AccountResourceId
         })
     }
@@ -600,6 +635,12 @@ function Build-Report {
 
         $isInUse = $totalCost -gt 0
 
+        # Format retirement date
+        $retireDateStr = $null
+        if ($dep.RetirementDate) {
+            try { $retireDateStr = ([datetime]$dep.RetirementDate).ToString('yyyy-MM-dd') } catch { $retireDateStr = [string]$dep.RetirementDate }
+        }
+
         $row = [PSCustomObject]@{
             SubscriptionName = $dep.SubscriptionName
             ResourceGroup    = $dep.ResourceGroupName
@@ -609,6 +650,8 @@ function Build-Report {
             DeploymentName   = $dep.DeploymentName
             ModelName        = $dep.ModelName
             ModelVersion     = $dep.ModelVersion
+            LifecycleStatus  = $dep.LifecycleStatus
+            RetirementDate   = $retireDateStr
             SKU              = $dep.SKU
             Capacity         = $dep.Capacity
             IsInUse          = $isInUse
@@ -632,6 +675,7 @@ function Build-Report {
     $uniqueAccounts = @($reportRows | ForEach-Object { $_.ResourceName } | Where-Object { $_ } | Select-Object -Unique)
     $uniqueSubs = @($reportRows | ForEach-Object { $_.SubscriptionName } | Where-Object { $_ } | Select-Object -Unique)
     $totalCostSum = ($reportRows | ForEach-Object { if ($_.TotalCost) { [decimal]$_.TotalCost } else { 0 } } | Measure-Object -Sum).Sum
+    $retiringCount = @($reportRows | Where-Object { $_.RetirementDate } ).Count
 
     # Generate summary CSV content
     $summaryRows = [System.Collections.Generic.List[PSCustomObject]]::new()
@@ -643,6 +687,7 @@ function Build-Report {
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Deployments Without Cost'; Value = $deploymentsNoCost })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Unique Models Deployed'; Value = $uniqueModels.Count })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Unique Models With Cost'; Value = $modelsWithCost.Count })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Models With Retirement Date'; Value = $retiringCount })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Total Cost (All Periods)'; Value = "`${0:N2}" -f $totalCostSum })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Billing Periods'; Value = ($BillingPeriodNames -join ', ') })
     $summaryCsvContent = ($summaryRows | ConvertTo-Csv -NoTypeInformation) -join "`n"
@@ -699,6 +744,7 @@ function Build-Report {
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Deployments No Cost</div><div class=`"value red`">$deploymentsNoCost</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Unique Models</div><div class=`"value blue`">$($uniqueModels.Count)</div><div class=`"detail`">$($modelsWithCost.Count) with cost</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">AI Accounts</div><div class=`"value`">$($uniqueAccounts.Count)</div></div>")
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Retiring</div><div class=`"value$(if ($retiringCount -gt 0) { ' red' })`">$retiringCount</div><div class=`"detail`">with retirement date</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Total Cost</div><div class=`"value green`">`$$('{0:N2}' -f $totalCostSum)</div><div class=`"detail`">across $($BillingPeriodNames.Count) period(s)</div></div>")
     [void]$htmlBuilder.AppendLine('  </div>')
 
@@ -712,7 +758,7 @@ function Build-Report {
     $headerColumns = @(
         'SubscriptionName', 'ResourceGroup', 'ResourceType', 'ResourceName',
         'ProjectName', 'DeploymentName', 'ModelName', 'ModelVersion',
-        'SKU', 'Capacity', 'IsInUse'
+        'LifecycleStatus', 'RetirementDate', 'SKU', 'Capacity', 'IsInUse'
     )
     foreach ($periodName in $BillingPeriodNames) {
         $headerColumns += "Cost_$periodName"
@@ -728,6 +774,8 @@ function Build-Report {
         'DeploymentName'   = 'Deployment'
         'ModelName'        = 'Model'
         'ModelVersion'     = 'Version'
+        'LifecycleStatus' = 'Status'
+        'RetirementDate'  = 'Retirement'
         'SKU'              = 'SKU'
         'Capacity'         = 'Capacity'
         'IsInUse'          = 'In Use'
