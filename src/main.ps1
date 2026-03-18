@@ -253,19 +253,25 @@ resources
         }
 
         # Extract model info from properties
+        # Resource Graph may return properties as hashtable or PSObject
         $modelName    = $null
         $modelVersion = $null
-        if ($dep.properties -and $dep.properties.model) {
-            $modelName    = $dep.properties.model.name
-            $modelVersion = $dep.properties.model.version
+        $props = $dep.properties
+        if ($props) {
+            $model = if ($props -is [hashtable]) { $props['model'] } else { $props.model }
+            if ($model) {
+                $modelName    = if ($model -is [hashtable]) { $model['name'] } else { $model.name }
+                $modelVersion = if ($model -is [hashtable]) { $model['version'] } else { $model.version }
+            }
         }
 
         # Extract SKU info
         $skuName  = $null
         $capacity = $null
-        if ($dep.sku) {
-            $skuName  = $dep.sku.name
-            $capacity = $dep.sku.capacity
+        $skuObj = $dep.sku
+        if ($skuObj) {
+            $skuName  = if ($skuObj -is [hashtable]) { $skuObj['name'] } else { $skuObj.name }
+            $capacity = if ($skuObj -is [hashtable]) { $skuObj['capacity'] } else { $skuObj.capacity }
         }
 
         $subscriptionName = $subscriptionNameCache[$subId]
@@ -741,9 +747,12 @@ function Publish-Report {
 #endregion Functions: Publish-Report
 
 #region Main Execution
+$startTime = Get-Date
+
 Write-Output ""
 Write-Output "########################################"
 Write-Output "  Model Hunter — Starting"
+Write-Output "  $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')"
 Write-Output "########################################"
 Write-Output ""
 
@@ -752,6 +761,18 @@ Write-Output "STEP 2: Discovering Model Deployments"
 Write-Output "========================================="
 Write-Output "Scanning $($SubscriptionIds.Count) subscription(s): $($SubscriptionIds -join ', ')"
 $deployments = Get-ModelDeployments -SubscriptionIds $SubscriptionIds
+
+# Show a preview of discovered deployments
+if ($deployments.Count -gt 0) {
+    Write-Output ""
+    Write-Output "Discovered deployments:"
+    foreach ($d in $deployments) {
+        Write-Output "  [$($d.ResourceType)] $($d.ResourceName)/$($d.DeploymentName) — Model: $($d.ModelName) $($d.ModelVersion) | SKU: $($d.SKU) | Sub: $($d.SubscriptionName)"
+    }
+}
+else {
+    Write-Warning "No deployments found across the scanned subscriptions."
+}
 
 Write-Output ""
 Write-Output "========================================="
@@ -807,11 +828,34 @@ else {
     Write-Warning "Report content is empty — skipping output. Check for errors above."
 }
 
+$endTime = Get-Date
+$duration = $endTime - $startTime
+
+# Compute summary stats
+$uniqueModels = @($deployments | Where-Object { $_.ModelName } | Select-Object -ExpandProperty ModelName -Unique)
+$uniqueSubs = @($deployments | Select-Object -ExpandProperty SubscriptionName -Unique)
+$inUseCount = 0
+$unusedCount = 0
+if ($report -and $report.CsvContent) {
+    # Count from the merged data
+    $inUseCount = @($deployments | Where-Object {
+        $key = if ($_.AccountResourceId) { $_.AccountResourceId } else { '' }
+        $key -and $costs.ContainsKey($key) -and ($costs[$key].Values | Measure-Object -Sum).Sum -gt 0
+    }).Count
+    $unusedCount = $deployments.Count - $inUseCount
+}
+
 Write-Output ""
 Write-Output "########################################"
-Write-Output "  Model Hunter Complete"
-Write-Output "  Deployments found: $($deployments.Count)"
-Write-Output "  Cost periods queried: $($billingPeriodNames.Count)"
-Write-Output "  Output mode: $(if ($StorageAccountResourceId) { 'Azure Blob Storage' } else { 'Local ($OutputPath)' })"
+Write-Output "  Model Hunter — Summary"
+Write-Output "########################################"
+Write-Output "  Duration:              $($duration.ToString('hh\:mm\:ss'))"
+Write-Output "  Subscriptions scanned: $($uniqueSubs.Count) ($($uniqueSubs -join ', '))"
+Write-Output "  Total deployments:     $($deployments.Count)"
+Write-Output "  Unique models:         $($uniqueModels.Count) ($($uniqueModels -join ', '))"
+Write-Output "  In use (with cost):    $inUseCount"
+Write-Output "  Unused (zero cost):    $unusedCount"
+Write-Output "  Cost periods queried:  $($billingPeriodNames.Count)"
+Write-Output "  Output mode:           $(if ($StorageAccountResourceId) { 'Azure Blob Storage' } else { "Local ($OutputPath)" })"
 Write-Output "########################################"
 #endregion Main Execution
