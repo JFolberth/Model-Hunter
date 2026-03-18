@@ -191,7 +191,7 @@ resources
     # Resource Graph may miss some deployment types (Global Standard, Data Zone, etc.)
     # The ARM API is authoritative for listing all deployments under an account.
     Write-Output "Querying deployments per account via ARM API..."
-    $allDeploymentResults = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $allDeploymentResults = [System.Collections.Generic.List[object]]::new()
 
     foreach ($account in $accountResults) {
         $accountId = $account.id
@@ -319,10 +319,13 @@ function Get-DeploymentCosts {
     .SYNOPSIS
         Queries Azure Cost Management for AI-related costs across the last 3 billing periods.
     .DESCRIPTION
-        Retrieves billing periods, then queries actual cost data filtered to Foundry/OpenAI
-        services. Returns a hashtable keyed by account resource ID with per-period costs.
+        Retrieves billing periods, then queries actual cost data. Filters results to only
+        the specified account resource IDs. Returns a hashtable keyed by account resource ID
+        with per-period costs.
     .PARAMETER SubscriptionIds
         Array of subscription IDs to query for cost data.
+    .PARAMETER AccountResourceIds
+        Array of CognitiveServices account resource IDs to match costs against.
     .OUTPUTS
         PSCustomObject with Costs (hashtable) and PeriodNames (string[]) properties.
     #>
@@ -330,7 +333,11 @@ function Get-DeploymentCosts {
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string[]]$SubscriptionIds
+        [string[]]$SubscriptionIds,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [string[]]$AccountResourceIds
     )
 
     Write-Output "Querying cost data..."
@@ -396,8 +403,8 @@ function Get-DeploymentCosts {
     $costs = @{}
 
     foreach ($subId in $SubscriptionIds) {
-        # Get the account resource IDs for this subscription — ONLY accounts with deployments
-        $subAccountIds = @($accountResults | Where-Object { $_.subscriptionId -eq $subId } | ForEach-Object { $_.id })
+        # Get the account resource IDs for this subscription from the passed-in list
+        $subAccountIds = @($AccountResourceIds | Where-Object { $_ -match "(?i)/subscriptions/$subId/" })
         if ($subAccountIds.Count -eq 0) {
             Write-Output "No CognitiveServices accounts in subscription '$subId' — skipping cost query."
             continue
@@ -831,7 +838,10 @@ Write-Output ""
 Write-Output "========================================="
 Write-Output "STEP 3: Querying Cost Data"
 Write-Output "========================================="
-$costResult = Get-DeploymentCosts -SubscriptionIds $SubscriptionIds
+# Extract unique account resource IDs from discovered deployments for cost matching
+$accountResourceIds = @($deployments | ForEach-Object { $_.AccountResourceId } | Where-Object { $_ } | Select-Object -Unique)
+Write-Output "Querying costs for $($accountResourceIds.Count) unique account(s)..."
+$costResult = Get-DeploymentCosts -SubscriptionIds $SubscriptionIds -AccountResourceIds $accountResourceIds
 
 $billingPeriodNames = if ($costResult.PeriodNames) { $costResult.PeriodNames } else { @() }
 $costs = if ($costResult.Costs) { $costResult.Costs } else { @{} }
