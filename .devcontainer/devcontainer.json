@@ -1,0 +1,43 @@
+{
+  "name": "Model Hunter",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/azure-cli:1": {},
+    "ghcr.io/devcontainers/features/terraform:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/powershell:1": {
+      "version": "7.2"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "pwsh -Command \"Install-Module -Name Az.Accounts, Az.ResourceGraph, Az.CostManagement, Az.Storage, Az.Billing -Force -Scope CurrentUser -AcceptLicense\"",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "hashicorp.terraform",
+        "ms-azuretools.vscode-azureterraform",
+        "ms-vscode.azure-account",
+        "ms-vscode.powershell",
+        "github.copilot",
+        "github.copilot-chat"
+      ],
+      "settings": {
+        "terraform.languageServer.enable": true,
+        "powershell.powerShellDefaultVersion": "PowerShell (7.2)",
+        "editor.formatOnSave": true,
+        "[terraform]": {
+          "editor.defaultFormatter": "hashicorp.terraform",
+          "editor.formatOnSave": true
+        }
+      }
+    }
+  },
+  "remoteEnv": {
+    "TF_PLUGIN_CACHE_DIR": "/home/vscode/.terraform.d/plugin-cache"
+  },
+  "postStartCommand": "mkdir -p $TF_PLUGIN_CACHE_DIR"
+}
