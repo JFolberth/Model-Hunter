@@ -37,13 +37,12 @@ resource "terraform_data" "runbook_content" {
   ]
 
   provisioner "local-exec" {
-    command = <<-EOT
-      az rest --method PUT ^
-        --url "https://management.azure.com${azapi_resource.runbook.id}/draft/content?api-version=2024-10-23" ^
-        --headers "Content-Type=text/powershell" ^
-        --body @${replace(var.script_path, "/", "\\")}
-      az rest --method POST ^
-        --url "https://management.azure.com${azapi_resource.runbook.id}/publish?api-version=2024-10-23"
+    interpreter = ["pwsh", "-Command"]
+    command     = <<-EOT
+      az rest --method PUT --url "https://management.azure.com${azapi_resource.runbook.id}/draft/content?api-version=2024-10-23" --headers "Content-Type=text/powershell" --body "@${replace(var.script_path, "\\", "/")}"
+      if ($LASTEXITCODE -ne 0) { throw "Failed to upload runbook draft content" }
+      az rest --method POST --url "https://management.azure.com${azapi_resource.runbook.id}/publish?api-version=2024-10-23"
+      if ($LASTEXITCODE -ne 0) { throw "Failed to publish runbook" }
     EOT
   }
 
