@@ -210,13 +210,38 @@ resources
                 $deploymentsData = ($response.Content | ConvertFrom-Json).value
                 if ($deploymentsData) {
                     foreach ($d in $deploymentsData) {
-                        # Add account context directly onto the deployment object
-                        $d | Add-Member -NotePropertyName '_accountName'    -NotePropertyValue $acctName    -Force
-                        $d | Add-Member -NotePropertyName '_accountKind'    -NotePropertyValue $acctKind    -Force
-                        $d | Add-Member -NotePropertyName '_accountId'      -NotePropertyValue $accountId   -Force
-                        $d | Add-Member -NotePropertyName '_resourceGroup'  -NotePropertyValue $acctRg      -Force
-                        $d | Add-Member -NotePropertyName '_subscriptionId' -NotePropertyValue $acctSubId   -Force
-                        $allDeploymentResults.Add($d)
+                        # Extract model info directly
+                        $mName = $null; $mVersion = $null
+                        if ($d.properties -and $d.properties.model) {
+                            $mName    = $d.properties.model.name
+                            $mVersion = $d.properties.model.version
+                        }
+                        # Extract SKU info directly
+                        $sName = $null; $sCap = $null
+                        if ($d.sku) {
+                            $sName = $d.sku.name
+                            $sCap  = $d.sku.capacity
+                        }
+                        # Check for project in deployment ID
+                        $projName = $null
+                        if ($d.id -match '(?i)/projects/([^/]+)') {
+                            $projName = $Matches[1]
+                        }
+
+                        $allDeploymentResults.Add([PSCustomObject]@{
+                            DeploymentId      = $d.id
+                            DeploymentName    = $d.name
+                            ModelName         = $mName
+                            ModelVersion      = $mVersion
+                            SKU               = $sName
+                            Capacity          = $sCap
+                            ProjectName       = $projName
+                            AccountName       = $acctName
+                            AccountKind       = $acctKind
+                            AccountResourceId = $accountId.ToLower()
+                            ResourceGroup     = $acctRg
+                            SubscriptionId    = $acctSubId
+                        })
                     }
                     Write-Output "    Found $($deploymentsData.Count) deployment(s)."
                 }
@@ -239,72 +264,34 @@ resources
     $deployments = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     foreach ($dep in $deploymentResults) {
-        # Use pre-populated account context from the ARM query
-        $subId          = $dep._subscriptionId
-        $rgName         = $dep._resourceGroup
-        $accountName    = $dep._accountName
-        $accountKind    = $dep._accountKind
-        $accountResId   = $dep._accountId
-        $deploymentName = $dep.name
-
-        # Check for project in the deployment resource ID
-        $projectName = $null
-        $resourceId = $dep.id
-        if ($resourceId -match '(?i)/projects/([^/]+)') {
-            $projectName = $Matches[1]
-        }
-
         # Classification rules (in order):
         # 1. kind == "OpenAI" → "OpenAI Service"
-        # 2. Resource ID contains /projects/ → "Foundry (Project)"
+        # 2. Has project name → "Foundry (Project)"
         # 3. Otherwise → "Foundry (Hub/Legacy)"
-        if ($accountKind -eq 'OpenAI') {
+        $resourceType = 'Foundry (Hub/Legacy)'
+        if ($dep.AccountKind -eq 'OpenAI') {
             $resourceType = 'OpenAI Service'
         }
-        elseif ($projectName) {
+        elseif ($dep.ProjectName) {
             $resourceType = 'Foundry (Project)'
         }
-        else {
-            $resourceType = 'Foundry (Hub/Legacy)'
-        }
 
-        # Extract model info from properties (ARM API returns PSObject from ConvertFrom-Json)
-        $modelName    = $null
-        $modelVersion = $null
-        $props = $dep.properties
-        if ($props) {
-            $model = $props.model
-            if ($model) {
-                $modelName    = $model.name
-                $modelVersion = $model.version
-            }
-        }
-
-        # Extract SKU info
-        $skuName  = $null
-        $capacity = $null
-        $skuObj = $dep.sku
-        if ($skuObj) {
-            $skuName  = $skuObj.name
-            $capacity = $skuObj.capacity
-        }
-
-        $subscriptionName = $subscriptionNameCache[$subId]
-        if (-not $subscriptionName) { $subscriptionName = $subId }
+        $subscriptionName = $subscriptionNameCache[$dep.SubscriptionId]
+        if (-not $subscriptionName) { $subscriptionName = $dep.SubscriptionId }
 
         $deployments.Add([PSCustomObject]@{
-            SubscriptionId    = $subId
+            SubscriptionId    = $dep.SubscriptionId
             SubscriptionName  = $subscriptionName
-            ResourceGroupName = $rgName
+            ResourceGroupName = $dep.ResourceGroup
             ResourceType      = $resourceType
-            ResourceName      = $accountName
-            ProjectName       = $projectName
-            DeploymentName    = $deploymentName
-            ModelName         = $modelName
-            ModelVersion      = $modelVersion
-            SKU               = $skuName
-            Capacity          = $capacity
-            AccountResourceId = $accountResId.ToLower()
+            ResourceName      = $dep.AccountName
+            ProjectName       = $dep.ProjectName
+            DeploymentName    = $dep.DeploymentName
+            ModelName         = $dep.ModelName
+            ModelVersion      = $dep.ModelVersion
+            SKU               = $dep.SKU
+            Capacity          = $dep.Capacity
+            AccountResourceId = $dep.AccountResourceId
         })
     }
 
