@@ -448,26 +448,39 @@ function Get-DeploymentCosts {
 
             Write-Output "  Returned $($costResult.Row.Count) cost row(s). Columns: $($costResult.Column.Name -join ', ')"
 
-            # Parse cost result rows
-            # Columns typically: Cost, ResourceId, ServiceName, Currency
+            # Parse cost result columns — names vary by API version and query type
             $columns = $costResult.Column
             $costIndex        = -1
             $resourceIdIndex  = -1
             $serviceNameIndex = -1
 
+            Write-Output "  Column names: $(($columns | ForEach-Object { "$($_.Name)($($_.Type))" }) -join ', ')"
+
             for ($i = 0; $i -lt $columns.Count; $i++) {
-                switch ($columns[$i].Name.ToLower()) {
-                    'cost'           { $costIndex       = $i }
-                    'resourceid'     { $resourceIdIndex = $i }
-                    'metercategory'  { $serviceNameIndex = $i }
-                    'servicename'    { if ($serviceNameIndex -lt 0) { $serviceNameIndex = $i } }
+                $colName = $columns[$i].Name.ToLower()
+                $colType = $columns[$i].Type.ToLower()
+
+                # Cost column: match by type 'number' as first column, or by common names
+                if ($colType -eq 'number' -and $costIndex -lt 0) {
+                    $costIndex = $i
+                }
+                if ($colName -match 'cost|pretaxcost|totalcost') {
+                    $costIndex = $i
+                }
+                if ($colName -match 'resourceid') {
+                    $resourceIdIndex = $i
+                }
+                if ($colName -match 'metercategory|servicename') {
+                    $serviceNameIndex = $i
                 }
             }
 
             if ($costIndex -lt 0 -or $resourceIdIndex -lt 0) {
-                Write-Warning "Unexpected column layout in cost query results for subscription '$subId', period '$periodName'."
+                Write-Warning "Could not identify cost ($costIndex) or resourceId ($resourceIdIndex) columns for subscription '$subId', period '$periodName'. Skipping."
                 continue
             }
+
+            Write-Output "  Using columns: cost=[$costIndex], resourceId=[$resourceIdIndex], service=[$serviceNameIndex]"
 
             $periodRowCount = 0
             foreach ($row in $costResult.Row) {
