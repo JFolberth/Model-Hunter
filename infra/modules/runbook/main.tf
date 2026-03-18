@@ -6,6 +6,73 @@ terraform {
   }
 }
 
+# https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/runtimeenvironments
+resource "azapi_resource" "runtime_environment" {
+  type      = "Microsoft.Automation/automationAccounts/runtimeEnvironments@2024-10-23"
+  name      = "PowerShell-74"
+  location  = var.location
+  parent_id = var.automation_account_id
+
+  body = {
+    properties = {
+      runtime = {
+        language = "PowerShell"
+        version  = "7.4"
+      }
+      defaultPackages = {
+        Az = "12.3.0"
+      }
+      description = "PowerShell 7.4 runtime for Model Hunter with required Az modules"
+    }
+  }
+}
+
+# https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/runtimeenvironments/packages
+resource "azapi_resource" "package_az_resourcegraph" {
+  type      = "Microsoft.Automation/automationAccounts/runtimeEnvironments/packages@2024-10-23"
+  name      = "Az.ResourceGraph"
+  parent_id = azapi_resource.runtime_environment.id
+
+  body = {
+    properties = {
+      contentLink = {
+        uri     = "https://www.powershellgallery.com/api/v2/package/Az.ResourceGraph"
+        version = "1.0.0"
+      }
+    }
+  }
+}
+
+resource "azapi_resource" "package_az_costmanagement" {
+  type      = "Microsoft.Automation/automationAccounts/runtimeEnvironments/packages@2024-10-23"
+  name      = "Az.CostManagement"
+  parent_id = azapi_resource.runtime_environment.id
+
+  body = {
+    properties = {
+      contentLink = {
+        uri     = "https://www.powershellgallery.com/api/v2/package/Az.CostManagement"
+        version = "1.0.0"
+      }
+    }
+  }
+}
+
+resource "azapi_resource" "package_az_storage" {
+  type      = "Microsoft.Automation/automationAccounts/runtimeEnvironments/packages@2024-10-23"
+  name      = "Az.Storage"
+  parent_id = azapi_resource.runtime_environment.id
+
+  body = {
+    properties = {
+      contentLink = {
+        uri     = "https://www.powershellgallery.com/api/v2/package/Az.Storage"
+        version = "7.0.0"
+      }
+    }
+  }
+}
+
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/runbooks
 resource "azapi_resource" "runbook" {
   type      = "Microsoft.Automation/automationAccounts/runbooks@2024-10-23"
@@ -16,13 +83,20 @@ resource "azapi_resource" "runbook" {
 
   body = {
     properties = {
-      runbookType = "PowerShell72"
-      description = "Model Hunter – discovers and reports on AI model deployments across subscriptions."
-      logVerbose  = true
-      logProgress = true
-      draft       = {}
+      runbookType         = "PowerShell"
+      runtimeEnvironment  = azapi_resource.runtime_environment.name
+      description         = "Model Hunter – discovers and reports on AI model deployments across subscriptions."
+      logVerbose          = true
+      logProgress         = true
+      draft               = {}
     }
   }
+
+  depends_on = [
+    azapi_resource.package_az_resourcegraph,
+    azapi_resource.package_az_costmanagement,
+    azapi_resource.package_az_storage
+  ]
 }
 
 # Upload the PowerShell script content to the runbook draft and publish it.
