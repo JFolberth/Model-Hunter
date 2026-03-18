@@ -557,6 +557,17 @@ function Build-Report {
     if (-not $Costs) { $Costs = @{} }
     if (-not $BillingPeriodNames) { $BillingPeriodNames = @() }
 
+    # Debug: show what cost keys we have vs what account IDs the deployments reference
+    if ($Costs.Count -gt 0) {
+        Write-Output "Cost data keys ($($Costs.Count)):"
+        foreach ($key in $Costs.Keys) { Write-Output "  Cost key: $key" }
+    }
+    $depAccountIds = @($Deployments | ForEach-Object { $_.AccountResourceId } | Where-Object { $_ } | Select-Object -Unique)
+    if ($depAccountIds.Count -gt 0) {
+        Write-Output "Deployment account IDs ($($depAccountIds.Count)):"
+        foreach ($aid in $depAccountIds) { Write-Output "  Account:  $aid" }
+    }
+
     $reportRows = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     foreach ($dep in $Deployments) {
@@ -598,6 +609,12 @@ function Build-Report {
         $row | Add-Member -NotePropertyName 'TotalCost' -NotePropertyValue $totalCost
 
         $reportRows.Add($row)
+    }
+
+    # Debug: show first row to verify data
+    if ($reportRows.Count -gt 0) {
+        $first = $reportRows[0]
+        Write-Output "First report row: Sub=$($first.SubscriptionName) RG=$($first.ResourceGroup) Type=$($first.ResourceType) Res=$($first.ResourceName) Deploy=$($first.DeploymentName) Model=$($first.ModelName) InUse=$($first.IsInUse)"
     }
 
     # Generate CSV content
