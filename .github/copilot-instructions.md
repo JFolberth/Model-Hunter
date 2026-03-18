@@ -139,10 +139,12 @@ terraform destroy -target=module.role_assignments  # Destroy a single module
 # Authenticate interactively first
 Connect-AzAccount
 
-# Run the full pipeline
+# Run locally (reports saved to ./output/)
+./src/main.ps1 -SubscriptionIds @("sub-id-1","sub-id-2")
+
+# Run with blob upload
 ./src/main.ps1 -SubscriptionIds @("sub-id-1","sub-id-2") `
-  -StorageAccountResourceId "/subscriptions/.../storageAccounts/..." `
-  -ContainerName "model-discovery-reports"
+  -StorageAccountResourceId "/subscriptions/.../storageAccounts/myaccount"
 
 # Or dot-source to test individual functions
 . ./src/main.ps1
@@ -150,7 +152,7 @@ $deployments = Get-ModelDeployments -SubscriptionIds @("sub-id-1")
 $costs = Get-DeploymentCosts -SubscriptionIds @("sub-id-1")
 ```
 
-Local output is written to the `output/` directory (gitignored).
+When `-StorageAccountResourceId` is omitted, reports are saved locally to `./output/` (gitignored). When provided, reports upload to Azure Blob Storage.
 
 ## Conventions
 

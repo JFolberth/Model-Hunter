@@ -30,11 +30,11 @@ param(
     [ValidateNotNullOrEmpty()]
     [string[]]$SubscriptionIds,
 
-    [Parameter(Mandatory)]
-    [ValidateNotNullOrEmpty()]
     [string]$StorageAccountResourceId,
 
-    [string]$ContainerName = "model-discovery-reports"
+    [string]$ContainerName = "model-discovery-reports",
+
+    [string]$OutputPath = "./output"
 )
 #endregion Parameters
 
@@ -44,10 +44,18 @@ param(
 # https://learn.microsoft.com/powershell/module/az.accounts/get-azcontext
 $context = Get-AzContext -ErrorAction SilentlyContinue
 if ($context) {
+    Write-Output "========================================="
+    Write-Output "STEP 1: Authentication"
+    Write-Output "========================================="
     Write-Output "Using existing Azure context: $($context.Account.Id)"
+    Write-Output "Tenant: $($context.Tenant.Id)"
+    Write-Output "Subscription: $($context.Subscription.Name) ($($context.Subscription.Id))"
 }
 else {
     try {
+        Write-Output "========================================="
+        Write-Output "STEP 1: Authentication"
+        Write-Output "========================================="
         Write-Output "No existing context found. Authenticating with Managed Identity..."
         # https://learn.microsoft.com/powershell/module/az.accounts/connect-azaccount
         Connect-AzAccount -Identity -ErrorAction Stop | Out-Null
@@ -58,6 +66,59 @@ else {
     }
 }
 #endregion Authentication
+
+#region Validation
+Write-Output ""
+Write-Output "========================================="
+Write-Output "STEP 1b: Validating Access"
+Write-Output "========================================="
+
+# Validate each subscription is accessible
+$validSubscriptionIds = [System.Collections.Generic.List[string]]::new()
+foreach ($subId in $SubscriptionIds) {
+    Write-Output "Checking subscription '$subId'..."
+    try {
+        # https://learn.microsoft.com/powershell/module/az.accounts/get-azsubscription
+        $sub = Get-AzSubscription -SubscriptionId $subId -ErrorAction Stop
+        Write-Output "  OK — $($sub.Name) ($($sub.State))"
+        $validSubscriptionIds.Add($subId)
+    }
+    catch {
+        Write-Warning "  SKIP — Cannot access subscription '$subId': $_"
+    }
+}
+
+if ($validSubscriptionIds.Count -eq 0) {
+    throw "No accessible subscriptions found. Verify the identity has Reader access to the target subscriptions."
+}
+
+if ($validSubscriptionIds.Count -lt $SubscriptionIds.Count) {
+    Write-Warning "$($SubscriptionIds.Count - $validSubscriptionIds.Count) subscription(s) were inaccessible and will be skipped."
+}
+$SubscriptionIds = $validSubscriptionIds.ToArray()
+
+# Validate storage account if provided
+if ($StorageAccountResourceId) {
+    Write-Output "Checking storage account..."
+    if ($StorageAccountResourceId -notmatch '(?i)/providers/Microsoft\.Storage/storageAccounts/([^/]+)') {
+        throw "Invalid StorageAccountResourceId format. Expected: /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.Storage/storageAccounts/{name}"
+    }
+    $storageAccountName = $Matches[1]
+    try {
+        # https://learn.microsoft.com/powershell/module/az.storage/new-azstoragecontext
+        $testContext = New-AzStorageContext -StorageAccountName $storageAccountName -UseConnectedAccount -ErrorAction Stop
+        # Quick check: list containers to verify access (will fail fast if no permissions)
+        Get-AzStorageContainer -Context $testContext -MaxCount 1 -ErrorAction Stop | Out-Null
+        Write-Output "  OK — Storage account '$storageAccountName' is accessible."
+    }
+    catch {
+        throw "Cannot access storage account '$storageAccountName'. Verify it exists and the identity has Storage Blob Data Contributor role: $_"
+    }
+}
+else {
+    Write-Output "No StorageAccountResourceId provided — reports will be saved locally to '$OutputPath'."
+}
+#endregion Validation
 
 #region Functions: Get-ModelDeployments
 function Get-ModelDeployments {
@@ -674,30 +735,77 @@ function Publish-Report {
 #endregion Functions: Publish-Report
 
 #region Main Execution
-Write-Output "Starting Model Hunter..."
+Write-Output ""
+Write-Output "########################################"
+Write-Output "  Model Hunter — Starting"
+Write-Output "########################################"
+Write-Output ""
 
+Write-Output "========================================="
+Write-Output "STEP 2: Discovering Model Deployments"
+Write-Output "========================================="
+Write-Output "Scanning $($SubscriptionIds.Count) subscription(s): $($SubscriptionIds -join ', ')"
 $deployments = Get-ModelDeployments -SubscriptionIds $SubscriptionIds
 
+Write-Output ""
+Write-Output "========================================="
+Write-Output "STEP 3: Querying Cost Data"
+Write-Output "========================================="
 $costResult = Get-DeploymentCosts -SubscriptionIds $SubscriptionIds
 
 $billingPeriodNames = if ($costResult.PeriodNames) { $costResult.PeriodNames } else { @() }
 $costs = if ($costResult.Costs) { $costResult.Costs } else { @{} }
 
+Write-Output ""
+Write-Output "========================================="
+Write-Output "STEP 4: Merging Data & Building Report"
+Write-Output "========================================="
+Write-Output "Merging $($deployments.Count) deployment(s) with cost data from $($billingPeriodNames.Count) period(s)..."
 $report = Build-Report `
     -Deployments $deployments `
     -Costs $costs `
     -BillingPeriodNames $billingPeriodNames
 
+Write-Output ""
+Write-Output "========================================="
+Write-Output "STEP 5: Publishing Report"
+Write-Output "========================================="
+
 if ($report.CsvContent -and $report.HtmlContent) {
-    Publish-Report `
-        -CsvContent $report.CsvContent `
-        -HtmlContent $report.HtmlContent `
-        -StorageAccountResourceId $StorageAccountResourceId `
-        -ContainerName $ContainerName
+    if ($StorageAccountResourceId) {
+        Write-Output "Uploading to Azure Blob Storage..."
+        Publish-Report `
+            -CsvContent $report.CsvContent `
+            -HtmlContent $report.HtmlContent `
+            -StorageAccountResourceId $StorageAccountResourceId `
+            -ContainerName $ContainerName
+    }
+    else {
+        # Local output mode
+        if (-not (Test-Path $OutputPath)) {
+            New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
+        }
+        $timestamp = (Get-Date).ToString('yyyy-MM-dd-HHmmss')
+        $csvFile  = Join-Path $OutputPath "model-discovery-$timestamp.csv"
+        $htmlFile = Join-Path $OutputPath "model-discovery-$timestamp.html"
+
+        [System.IO.File]::WriteAllText($csvFile, $report.CsvContent)
+        [System.IO.File]::WriteAllText($htmlFile, $report.HtmlContent)
+
+        Write-Output "Reports saved locally:"
+        Write-Output "  CSV:  $csvFile"
+        Write-Output "  HTML: $htmlFile"
+    }
 }
 else {
-    Write-Warning "Report content is empty — skipping upload. Check for errors above."
+    Write-Warning "Report content is empty — skipping output. Check for errors above."
 }
 
-Write-Output "Model Hunter complete. Found $($deployments.Count) deployment(s)."
+Write-Output ""
+Write-Output "########################################"
+Write-Output "  Model Hunter Complete"
+Write-Output "  Deployments found: $($deployments.Count)"
+Write-Output "  Cost periods queried: $($billingPeriodNames.Count)"
+Write-Output "  Output mode: $(if ($StorageAccountResourceId) { 'Azure Blob Storage' } else { 'Local ($OutputPath)' })"
+Write-Output "########################################"
 #endregion Main Execution

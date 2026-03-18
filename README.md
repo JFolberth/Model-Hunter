@@ -32,12 +32,15 @@ Run the discovery script locally before deploying to Azure:
 3. Run the script:
 
    ```powershell
-   ./src/main.ps1 -SubscriptionIds @("sub-id") `
-     -StorageAccountResourceId "/subscriptions/.../storageAccounts/..." `
-     -ContainerName "model-discovery-reports"
+   ./src/main.ps1 -SubscriptionIds @("sub-id-1", "sub-id-2")
    ```
 
-> **Note:** When running locally, report output is written to the `output/` directory, which is gitignored.
+   Reports are saved to the `output/` directory (gitignored). To upload directly to blob storage instead, add the `-StorageAccountResourceId` parameter:
+
+   ```powershell
+   ./src/main.ps1 -SubscriptionIds @("sub-id") `
+     -StorageAccountResourceId "/subscriptions/.../storageAccounts/myaccount"
+   ```
 
 ## Infrastructure Deployment
 
