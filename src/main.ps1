@@ -39,14 +39,23 @@ param(
 #endregion Parameters
 
 #region Authentication
-try {
-    Write-Output "Authenticating with Managed Identity..."
-    # https://learn.microsoft.com/powershell/module/az.accounts/connect-azaccount
-    Connect-AzAccount -Identity -ErrorAction Stop | Out-Null
-    Write-Output "Authentication successful."
+# Check if already authenticated (e.g., local dev via Connect-AzAccount)
+# If not, attempt Managed Identity auth (Azure Automation)
+# https://learn.microsoft.com/powershell/module/az.accounts/get-azcontext
+$context = Get-AzContext -ErrorAction SilentlyContinue
+if ($context) {
+    Write-Output "Using existing Azure context: $($context.Account.Id)"
 }
-catch {
-    throw "Failed to authenticate with Managed Identity: $_"
+else {
+    try {
+        Write-Output "No existing context found. Authenticating with Managed Identity..."
+        # https://learn.microsoft.com/powershell/module/az.accounts/connect-azaccount
+        Connect-AzAccount -Identity -ErrorAction Stop | Out-Null
+        Write-Output "Managed Identity authentication successful."
+    }
+    catch {
+        throw "Not authenticated. Run 'Connect-AzAccount' locally or ensure Managed Identity is configured: $_"
+    }
 }
 #endregion Authentication
 
