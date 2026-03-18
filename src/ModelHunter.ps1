@@ -456,6 +456,7 @@ function Get-DeploymentCosts {
 
     # Costs hashtable: key = lowercase account resource ID, value = hashtable of period → cost
     $costs = @{}
+    $currency = 'USD'  # Default; updated from first cost result with a currency column
 
     foreach ($subId in $SubscriptionIds) {
         # Get the account resource IDs for this subscription from the passed-in list
@@ -509,6 +510,7 @@ function Get-DeploymentCosts {
             $costIndex        = -1
             $resourceIdIndex  = -1
             $serviceNameIndex = -1
+            $currencyIndex    = -1
 
             for ($i = 0; $i -lt $columns.Count; $i++) {
                 $colName = $columns[$i].Name.ToLower()
@@ -517,6 +519,7 @@ function Get-DeploymentCosts {
                 if ($colType -eq 'number' -and $costIndex -lt 0) { $costIndex = $i }
                 if ($colName -match 'cost|pretaxcost|totalcost') { $costIndex = $i }
                 if ($colName -match 'resourceid') { $resourceIdIndex = $i }
+                if ($colName -match 'currency') { $currencyIndex = $i }
                 if ($colName -match 'metercategory|servicename') { $serviceNameIndex = $i }
             }
 
@@ -530,6 +533,12 @@ function Get-DeploymentCosts {
                 $costAmount = [decimal]$row[$costIndex]
                 $rawResourceId = [string]$row[$resourceIdIndex]
                 $serviceName = if ($serviceNameIndex -ge 0) { [string]$row[$serviceNameIndex] } else { 'N/A' }
+
+                # Capture currency from the first row that has one
+                if ($currencyIndex -ge 0 -and $currency -eq 'USD') {
+                    $rowCurrency = [string]$row[$currencyIndex]
+                    if ($rowCurrency) { $currency = $rowCurrency }
+                }
 
                 # Normalize the resource ID to account level (strip /deployments/... and /projects/...)
                 $accountId = $rawResourceId
@@ -568,11 +577,12 @@ function Get-DeploymentCosts {
         }
     }
 
-    Write-Host "Cost query complete. Found cost data for $($costs.Count) account(s)."
+    Write-Host "Cost query complete. Found cost data for $($costs.Count) account(s). Currency: $currency"
 
     return [PSCustomObject]@{
         Costs       = $costs
         PeriodNames = $periodNames
+        Currency    = $currency
     }
 }
 #endregion Functions: Get-DeploymentCosts
@@ -607,7 +617,9 @@ function Build-Report {
         [Parameter(Mandatory)]
         [AllowNull()]
         [AllowEmptyCollection()]
-        [string[]]$BillingPeriodNames
+        [string[]]$BillingPeriodNames,
+
+        [string]$Currency = 'USD'
     )
 
     Write-Host "Building report for $($Deployments.Count) deployment(s)..."
@@ -635,10 +647,10 @@ function Build-Report {
 
         $isInUse = $totalCost -gt 0
 
-        # Format retirement date
+        # Format retirement date as YYYY-MM
         $retireDateStr = $null
         if ($dep.RetirementDate) {
-            try { $retireDateStr = ([datetime]$dep.RetirementDate).ToString('yyyy-MM-dd') } catch { $retireDateStr = [string]$dep.RetirementDate }
+            try { $retireDateStr = ([datetime]$dep.RetirementDate).ToString('yyyy-MM') } catch { $retireDateStr = [string]$dep.RetirementDate }
         }
 
         $row = [PSCustomObject]@{
@@ -676,6 +688,11 @@ function Build-Report {
     $uniqueSubs = @($reportRows | ForEach-Object { $_.SubscriptionName } | Where-Object { $_ } | Select-Object -Unique)
     $totalCostSum = ($reportRows | ForEach-Object { if ($_.TotalCost) { [decimal]$_.TotalCost } else { 0 } } | Measure-Object -Sum).Sum
     $retiringCount = @($reportRows | Where-Object { $_.RetirementDate } ).Count
+    $retiringSoonCount = @($reportRows | Where-Object {
+        if ($_.RetirementDate) {
+            try { ([datetime]::ParseExact($_.RetirementDate, 'yyyy-MM', $null)).AddMonths(1).AddDays(-1) -le (Get-Date).AddDays(90) } catch { $false }
+        } else { $false }
+    }).Count
 
     # Generate summary CSV content
     $summaryRows = [System.Collections.Generic.List[PSCustomObject]]::new()
@@ -688,7 +705,8 @@ function Build-Report {
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Unique Models Deployed'; Value = $uniqueModels.Count })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Unique Models With Cost'; Value = $modelsWithCost.Count })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Models With Retirement Date'; Value = $retiringCount })
-    $summaryRows.Add([PSCustomObject]@{ Metric = 'Total Cost (All Periods)'; Value = "`${0:N2}" -f $totalCostSum })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Total Cost (All Periods)'; Value = "$Currency $('{0:N2}' -f $totalCostSum)" })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Currency'; Value = $Currency })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Billing Periods'; Value = ($BillingPeriodNames -join ', ') })
     $summaryCsvContent = ($summaryRows | ConvertTo-Csv -NoTypeInformation) -join "`n"
 
@@ -744,8 +762,8 @@ function Build-Report {
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Deployments No Cost</div><div class=`"value red`">$deploymentsNoCost</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Unique Models</div><div class=`"value blue`">$($uniqueModels.Count)</div><div class=`"detail`">$($modelsWithCost.Count) with cost</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">AI Accounts</div><div class=`"value`">$($uniqueAccounts.Count)</div></div>")
-    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Retiring</div><div class=`"value$(if ($retiringCount -gt 0) { ' red' })`">$retiringCount</div><div class=`"detail`">with retirement date</div></div>")
-    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Total Cost</div><div class=`"value green`">`$$('{0:N2}' -f $totalCostSum)</div><div class=`"detail`">across $($BillingPeriodNames.Count) period(s)</div></div>")
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Retiring in 90 Days</div><div class=`"value$(if ($retiringSoonCount -gt 0) { ' red' })`">$retiringSoonCount</div><div class=`"detail`">$retiringCount total with retirement date</div></div>")
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Total Cost ($Currency)</div><div class=`"value green`">$('{0:N2}' -f $totalCostSum)</div><div class=`"detail`">across $($BillingPeriodNames.Count) period(s)</div></div>")
     [void]$htmlBuilder.AppendLine('  </div>')
 
     # Deployment table
@@ -978,16 +996,18 @@ $costResult = Get-DeploymentCosts -SubscriptionIds $SubscriptionIds -AccountReso
 
 $billingPeriodNames = if ($costResult.PeriodNames) { $costResult.PeriodNames } else { @() }
 $costs = if ($costResult.Costs) { $costResult.Costs } else { @{} }
+$currency = if ($costResult.Currency) { $costResult.Currency } else { 'USD' }
 
 Write-Output ""
 Write-Output "========================================="
 Write-Output "STEP 4: Merging Data & Building Report"
 Write-Output "========================================="
-Write-Output "Merging $($deployments.Count) deployment(s) with cost data from $($billingPeriodNames.Count) period(s)..."
+Write-Output "Merging $($deployments.Count) deployment(s) with cost data from $($billingPeriodNames.Count) period(s) (currency: $currency)..."
 $report = Build-Report `
     -Deployments $deployments `
     -Costs $costs `
-    -BillingPeriodNames $billingPeriodNames
+    -BillingPeriodNames $billingPeriodNames `
+    -Currency $currency
 
 Write-Output ""
 Write-Output "========================================="
