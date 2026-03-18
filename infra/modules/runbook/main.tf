@@ -25,27 +25,29 @@ resource "azapi_resource" "runbook" {
   }
 }
 
-# Upload the PowerShell script content to the runbook draft
-# https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/runbooks/draft-content
-resource "azapi_resource_action" "runbook_draft_content" {
-  type        = "Microsoft.Automation/automationAccounts/runbooks@2024-10-23"
-  resource_id = "${azapi_resource.runbook.id}/draft/content"
-  action      = ""
-  method      = "PUT"
-  body        = file(var.script_path)
+# Upload the PowerShell script content to the runbook draft and publish it.
+# azapi_resource_action requires an HCL object body (azapi 2.0+), but the
+# draft/content endpoint expects raw text. We use a local-exec provisioner
+# to call the Azure REST API directly via az cli.
+# https://learn.microsoft.com/rest/api/automation/runbook-draft/replace-content
+resource "terraform_data" "runbook_content" {
+  triggers_replace = [
+    filesha256(var.script_path),
+    azapi_resource.runbook.id
+  ]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      az rest --method PUT ^
+        --url "https://management.azure.com${azapi_resource.runbook.id}/draft/content?api-version=2024-10-23" ^
+        --headers "Content-Type=text/powershell" ^
+        --body @${replace(var.script_path, "/", "\\")}
+      az rest --method POST ^
+        --url "https://management.azure.com${azapi_resource.runbook.id}/publish?api-version=2024-10-23"
+    EOT
+  }
 
   depends_on = [azapi_resource.runbook]
-}
-
-# Publish the runbook after uploading draft content
-# https://learn.microsoft.com/rest/api/automation/runbook/publish
-resource "azapi_resource_action" "runbook_publish" {
-  type        = "Microsoft.Automation/automationAccounts/runbooks@2024-10-23"
-  resource_id = azapi_resource.runbook.id
-  action      = "publish"
-  method      = "POST"
-
-  depends_on = [azapi_resource_action.runbook_draft_content]
 }
 
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/schedules
@@ -93,5 +95,5 @@ resource "azapi_resource" "job_schedule" {
     }
   }
 
-  depends_on = [azapi_resource_action.runbook_publish]
+  depends_on = [terraform_data.runbook_content]
 }
