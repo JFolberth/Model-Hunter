@@ -6,6 +6,7 @@ provider "registry.terraform.io/azure/azapi" {
   constraints = "~> 2.0"
   hashes = [
     "h1:OHkG0B1rphuC9qxN4qXNshulMjM3gIqeJVPSvVcewcM=",
+    "h1:T1HpMzwCr3VVt5rCJ2ntcZ75TXDB9boby48c4DPWi70=",
     "zh:048fa67ba123c6da65a7af12453328e36e1783cac1dbecc905d44ee7a1daa41c",
     "zh:08dfb8c493a99aa54ea0c00f5d2e2389aac55d70b31bfc50a38e4ab61800aca8",
     "zh:0d5bf53f356864567bf0855eb90b0b9aa4619b60fd1469210461ad88c0508a6f",

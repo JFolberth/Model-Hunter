@@ -1,5 +1,3 @@
-#requires -Modules Az.Accounts, Az.ResourceGraph, Az.Billing, Az.CostManagement, Az.Storage
-
 <#
 .SYNOPSIS
     Model Hunter — discovers deployed Azure AI Foundry and OpenAI models across subscriptions,
@@ -23,10 +21,6 @@
 .PARAMETER ContainerName
     Blob container name for report upload. Defaults to "model-discovery-reports".
     Only used when StorageAccountResourceId is provided.
-
-.PARAMETER OutputPath
-    Local directory for report output when StorageAccountResourceId is not provided.
-    Defaults to "./output".
 #>
 
 #region Parameters
@@ -38,11 +32,26 @@ param(
 
     [string]$StorageAccountResourceId,
 
-    [string]$ContainerName = "model-discovery-reports",
-
-    [string]$OutputPath = "./output"
+    [string]$ContainerName = "model-discovery-reports"
 )
+
+# OutputPath is only used for local runs (not exposed as a Runbook parameter)
+$OutputPath = "./output"
 #endregion Parameters
+
+#region Module Check
+# Verify required modules are available (gives clear error instead of silent failure)
+$requiredModules = @('Az.Accounts', 'Az.ResourceGraph', 'Az.CostManagement', 'Az.Storage')
+$missingModules = @()
+foreach ($mod in $requiredModules) {
+    if (-not (Get-Module -ListAvailable -Name $mod -ErrorAction SilentlyContinue)) {
+        $missingModules += $mod
+    }
+}
+if ($missingModules.Count -gt 0) {
+    throw "Missing required PowerShell modules: $($missingModules -join ', '). Install with: Install-Module $($missingModules -join ', ') -Force"
+}
+#endregion Module Check
 
 #region Authentication
 # Check if already authenticated (e.g., local dev via Connect-AzAccount)

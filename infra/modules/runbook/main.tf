@@ -52,7 +52,7 @@ resource "terraform_data" "runbook_content" {
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/schedules
 resource "azapi_resource" "schedule" {
   type      = "Microsoft.Automation/automationAccounts/schedules@2024-10-23"
-  name      = "${var.name}-schedule"
+  name      = "${var.name}-default-schedule"
   parent_id = var.automation_account_id
 
   body = {
