@@ -245,40 +245,58 @@ function Get-DeploymentCosts {
         [string[]]$SubscriptionIds
     )
 
-    Write-Output "Querying cost data for the last 3 billing periods..."
+    Write-Output "Querying cost data..."
 
-    # Get the last 3 billing periods
+    # Try billing periods first; fall back to last 3 calendar months if unavailable
+    # (Get-AzBillingPeriod doesn't work for all account types: PAYG, MCA, etc.)
+    $periods = @()
     try {
         # https://learn.microsoft.com/powershell/module/az.billing/get-azbillingperiod
         $billingPeriods = Get-AzBillingPeriod -MaxCount 3 -ErrorAction Stop
+        if ($billingPeriods -and $billingPeriods.Count -gt 0) {
+            foreach ($bp in $billingPeriods) {
+                $periods += [PSCustomObject]@{
+                    Name      = $bp.Name
+                    StartDate = $bp.BillingPeriodStartDate.ToString('yyyy-MM-dd')
+                    EndDate   = $bp.BillingPeriodEndDate.ToString('yyyy-MM-dd')
+                }
+            }
+            Write-Output "Using billing periods: $($periods.Name -join ', ')"
+        }
     }
     catch {
-        Write-Warning "Failed to retrieve billing periods: $_. Cost data will be unavailable."
-        return [PSCustomObject]@{
-            Costs       = @{}
-            PeriodNames = @()
-        }
+        Write-Warning "Could not retrieve billing periods: $_"
     }
 
-    if (-not $billingPeriods -or $billingPeriods.Count -eq 0) {
-        Write-Warning "No billing periods found. Cost data will be unavailable."
-        return [PSCustomObject]@{
-            Costs       = @{}
-            PeriodNames = @()
+    # Fallback: generate last 3 calendar months
+    if ($periods.Count -eq 0) {
+        Write-Output "Billing periods unavailable — falling back to last 3 calendar months."
+        $now = Get-Date
+        for ($m = 0; $m -lt 3; $m++) {
+            $monthStart = $now.AddMonths(-$m - 1)
+            $firstDay = [datetime]::new($monthStart.Year, $monthStart.Month, 1)
+            $lastDay = $firstDay.AddMonths(1).AddDays(-1)
+            $periods += [PSCustomObject]@{
+                Name      = $firstDay.ToString('yyyyMM')
+                StartDate = $firstDay.ToString('yyyy-MM-dd')
+                EndDate   = $lastDay.ToString('yyyy-MM-dd')
+            }
         }
+        # Sort oldest first
+        $periods = $periods | Sort-Object Name
+        Write-Output "Using calendar months: $($periods.Name -join ', ')"
     }
 
-    $periodNames = @($billingPeriods | ForEach-Object { $_.Name })
-    Write-Output "Billing periods: $($periodNames -join ', ')"
+    $periodNames = @($periods | ForEach-Object { $_.Name })
 
     # Costs hashtable: key = lowercase account resource ID, value = hashtable of period → cost
     $costs = @{}
 
     foreach ($subId in $SubscriptionIds) {
-        foreach ($period in $billingPeriods) {
+        foreach ($period in $periods) {
             $periodName = $period.Name
-            $startDate  = $period.BillingPeriodStartDate.ToString('yyyy-MM-dd')
-            $endDate    = $period.BillingPeriodEndDate.ToString('yyyy-MM-dd')
+            $startDate  = $period.StartDate
+            $endDate    = $period.EndDate
 
             Write-Output "Querying costs for subscription '$subId', period '$periodName' ($startDate to $endDate)..."
 
@@ -411,6 +429,7 @@ function Build-Report {
         [hashtable]$Costs,
 
         [Parameter(Mandatory)]
+        [AllowNull()]
         [AllowEmptyCollection()]
         [string[]]$BillingPeriodNames
     )
@@ -418,6 +437,7 @@ function Build-Report {
     Write-Output "Building report for $($Deployments.Count) deployment(s)..."
 
     if (-not $Costs) { $Costs = @{} }
+    if (-not $BillingPeriodNames) { $BillingPeriodNames = @() }
 
     $reportRows = [System.Collections.Generic.List[PSCustomObject]]::new()
 
@@ -654,16 +674,24 @@ $deployments = Get-ModelDeployments -SubscriptionIds $SubscriptionIds
 
 $costResult = Get-DeploymentCosts -SubscriptionIds $SubscriptionIds
 
+$billingPeriodNames = if ($costResult.PeriodNames) { $costResult.PeriodNames } else { @() }
+$costs = if ($costResult.Costs) { $costResult.Costs } else { @{} }
+
 $report = Build-Report `
     -Deployments $deployments `
-    -Costs $costResult.Costs `
-    -BillingPeriodNames $costResult.PeriodNames
+    -Costs $costs `
+    -BillingPeriodNames $billingPeriodNames
 
-Publish-Report `
-    -CsvContent $report.CsvContent `
-    -HtmlContent $report.HtmlContent `
-    -StorageAccountResourceId $StorageAccountResourceId `
-    -ContainerName $ContainerName
+if ($report.CsvContent -and $report.HtmlContent) {
+    Publish-Report `
+        -CsvContent $report.CsvContent `
+        -HtmlContent $report.HtmlContent `
+        -StorageAccountResourceId $StorageAccountResourceId `
+        -ContainerName $ContainerName
+}
+else {
+    Write-Warning "Report content is empty — skipping upload. Check for errors above."
+}
 
 Write-Output "Model Hunter complete. Found $($deployments.Count) deployment(s)."
 #endregion Main Execution
