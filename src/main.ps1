@@ -400,6 +400,13 @@ function Get-DeploymentCosts {
     $costs = @{}
 
     foreach ($subId in $SubscriptionIds) {
+        # Get the account resource IDs for this subscription — ONLY accounts with deployments
+        $subAccountIds = @($accountResults | Where-Object { $_.subscriptionId -eq $subId } | ForEach-Object { $_.id })
+        if ($subAccountIds.Count -eq 0) {
+            Write-Output "No CognitiveServices accounts in subscription '$subId' — skipping cost query."
+            continue
+        }
+
         foreach ($period in $periods) {
             $periodName = $period.Name
             $startDate  = $period.StartDate
@@ -409,11 +416,13 @@ function Get-DeploymentCosts {
 
             $scope = "/subscriptions/$subId"
 
-            # Build the filter: ServiceName dimension containing Foundry or OpenAI
+            # Filter by the specific ResourceId values of discovered accounts
+            # This ensures we only get costs for accounts with AI model deployments,
+            # not other CognitiveServices (Speech, Vision, Language, etc.)
             # https://learn.microsoft.com/powershell/module/az.costmanagement/new-azcostmanagementquerycomparisonexpressionobject
             $filterDimension = New-AzCostManagementQueryComparisonExpressionObject `
-                -Name 'ServiceName' `
-                -Value @('Azure AI Foundry Models', 'Azure OpenAI Service')
+                -Name 'ResourceId' `
+                -Value $subAccountIds
 
             $filter = New-AzCostManagementQueryFilterObject `
                 -Dimensions $filterDimension
@@ -429,7 +438,7 @@ function Get-DeploymentCosts {
                     -DatasetGranularity 'None' `
                     -DatasetGrouping @(
                         @{ Type = 'Dimension'; Name = 'ResourceId' },
-                        @{ Type = 'Dimension'; Name = 'ServiceName' }
+                        @{ Type = 'Dimension'; Name = 'MeterCategory' }
                     ) `
                     -DatasetFilter $filter `
                     -ErrorAction Stop
@@ -440,20 +449,25 @@ function Get-DeploymentCosts {
             }
 
             if (-not $costResult -or -not $costResult.Row) {
-                Write-Output "No cost rows returned for subscription '$subId', period '$periodName'."
+                Write-Output "  No cost rows returned."
                 continue
             }
+
+            Write-Output "  Returned $($costResult.Row.Count) cost row(s). Columns: $($costResult.Column.Name -join ', ')"
 
             # Parse cost result rows
             # Columns typically: Cost, ResourceId, ServiceName, Currency
             $columns = $costResult.Column
-            $costIndex       = -1
-            $resourceIdIndex = -1
+            $costIndex        = -1
+            $resourceIdIndex  = -1
+            $serviceNameIndex = -1
 
             for ($i = 0; $i -lt $columns.Count; $i++) {
                 switch ($columns[$i].Name.ToLower()) {
-                    'cost'       { $costIndex       = $i }
-                    'resourceid' { $resourceIdIndex = $i }
+                    'cost'           { $costIndex       = $i }
+                    'resourceid'     { $resourceIdIndex = $i }
+                    'metercategory'  { $serviceNameIndex = $i }
+                    'servicename'    { if ($serviceNameIndex -lt 0) { $serviceNameIndex = $i } }
                 }
             }
 
@@ -462,9 +476,16 @@ function Get-DeploymentCosts {
                 continue
             }
 
+            $periodRowCount = 0
             foreach ($row in $costResult.Row) {
                 $costAmount = [decimal]$row[$costIndex]
                 $rawResourceId = [string]$row[$resourceIdIndex]
+                $serviceName = if ($serviceNameIndex -ge 0) { [string]$row[$serviceNameIndex] } else { 'N/A' }
+
+                if ($costAmount -gt 0) {
+                    $periodRowCount++
+                    Write-Output "    $($serviceName): `$$([math]::Round($costAmount, 2)) — $rawResourceId"
+                }
 
                 # Normalize the resource ID to account level (strip /deployments/... and /projects/...)
                 $accountId = $rawResourceId
