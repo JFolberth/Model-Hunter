@@ -172,7 +172,7 @@ When `-StorageAccountResourceId` is omitted, reports are saved locally to `./out
 - **Function structure**: Each function within `main.ps1` is self-contained. The `#region Main Execution` block at the bottom calls them in sequence.
 - **Parameters**: Use `[CmdletBinding()]` and typed parameters with `[Parameter(Mandatory)]` where appropriate. Validate with `[ValidateNotNullOrEmpty()]`.
 - **Error handling**: Use `try/catch` blocks. On fatal errors, use `throw` to propagate. On non-fatal errors (e.g., one subscription fails), log with `Write-Warning` and continue.
-- **Logging**: Use `Write-Output` for key progress messages (visible in Runbook job output). Use `Write-Verbose` for detailed debug info. Do not use `Write-Host` (not captured in Automation logs).
+- **Logging**: Use `Write-Host` inside functions (avoids polluting return values — in PS 7+ Write-Host writes to Information stream, captured in Automation logs). Use `Write-Output` only in the main execution block. Use `Write-Warning` for non-fatal errors.
 - **No hardcoded values**: All configuration (subscription IDs, storage account, container name) comes from parameters.
 - **Authentication pattern**: The `#region Authentication` block handles `Connect-AzAccount -Identity` once. Functions assume they're already authenticated.
 

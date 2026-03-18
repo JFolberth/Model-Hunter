@@ -146,7 +146,7 @@ function Get-ModelDeployments {
         [string[]]$SubscriptionIds
     )
 
-    Write-Output "Discovering model deployments across $($SubscriptionIds.Count) subscription(s)..."
+    Write-Host "Discovering model deployments across $($SubscriptionIds.Count) subscription(s)..."
 
     # Cache subscription names to avoid repeated lookups
     $subscriptionNameCache = @{}
@@ -171,7 +171,7 @@ resources
 | project id, name, resourceGroup, subscriptionId, kind, location
 "@
 
-    Write-Output "Querying CognitiveServices accounts via Resource Graph..."
+    Write-Host "Querying CognitiveServices accounts via Resource Graph..."
     try {
         # https://learn.microsoft.com/powershell/module/az.resourcegraph/search-azgraph
         $accountResults = Search-AzGraph -Query $accountQuery -Subscription $SubscriptionIds -ErrorAction Stop
@@ -185,12 +185,12 @@ resources
     foreach ($account in $accountResults) {
         $accountKindMap[$account.id.ToLower()] = $account.kind
     }
-    Write-Output "Found $($accountResults.Count) CognitiveServices account(s)."
+    Write-Host "Found $($accountResults.Count) CognitiveServices account(s)."
 
     # Query 2: For each account, list deployments via ARM API
     # Resource Graph may miss some deployment types (Global Standard, Data Zone, etc.)
     # The ARM API is authoritative for listing all deployments under an account.
-    Write-Output "Querying deployments per account via ARM API..."
+    Write-Host "Querying deployments per account via ARM API..."
     $allDeploymentResults = [System.Collections.Generic.List[object]]::new()
 
     foreach ($account in $accountResults) {
@@ -200,7 +200,7 @@ resources
         $acctRg = $account.resourceGroup
         $acctSubId = $account.subscriptionId
 
-        Write-Output "  Listing deployments for $acctName ($acctKind)..."
+        Write-Host "  Listing deployments for $acctName ($acctKind)..."
         try {
             # https://learn.microsoft.com/rest/api/cognitiveservices/accountmanagement/deployments/list
             $deploymentsUrl = "https://management.azure.com${accountId}/deployments?api-version=2024-10-01"
@@ -243,10 +243,10 @@ resources
                             SubscriptionId    = $acctSubId
                         })
                     }
-                    Write-Output "    Found $($deploymentsData.Count) deployment(s)."
+                    Write-Host "    Found $($deploymentsData.Count) deployment(s)."
                 }
                 else {
-                    Write-Output "    No deployments."
+                    Write-Host "    No deployments."
                 }
             }
             else {
@@ -259,7 +259,7 @@ resources
     }
 
     $deploymentResults = $allDeploymentResults.ToArray()
-    Write-Output "Found $($deploymentResults.Count) total deployment(s) across all accounts."
+    Write-Host "Found $($deploymentResults.Count) total deployment(s) across all accounts."
 
     $deployments = [System.Collections.Generic.List[PSCustomObject]]::new()
 
@@ -295,7 +295,7 @@ resources
         })
     }
 
-    Write-Output "Parsed $($deployments.Count) deployment(s) successfully."
+    Write-Host "Parsed $($deployments.Count) deployment(s) successfully."
     return $deployments.ToArray()
 }
 #endregion Functions: Get-ModelDeployments
@@ -327,7 +327,7 @@ function Get-DeploymentCosts {
         [string[]]$AccountResourceIds
     )
 
-    Write-Output "Querying cost data..."
+    Write-Host "Querying cost data..."
 
     # Try billing periods first; fall back to last 3 calendar months if unavailable
     # (Get-AzBillingPeriod doesn't work for all account types: PAYG, MCA, etc.)
@@ -335,7 +335,7 @@ function Get-DeploymentCosts {
     $costMethod = $null
     try {
         # https://learn.microsoft.com/powershell/module/az.billing/get-azbillingperiod
-        Write-Output "Attempting to retrieve Azure billing periods (preferred method)..."
+        Write-Host "Attempting to retrieve Azure billing periods (preferred method)..."
         $billingPeriods = Get-AzBillingPeriod -MaxCount 3 -ErrorAction Stop
         if ($billingPeriods -and $billingPeriods.Count -gt 0) {
             $costMethod = "BillingPeriods"
@@ -346,13 +346,13 @@ function Get-DeploymentCosts {
                     EndDate   = $bp.BillingPeriodEndDate.ToString('yyyy-MM-dd')
                 }
             }
-            Write-Output "[Cost Method: Billing Periods] Retrieved $($periods.Count) period(s): $($periods.Name -join ', ')"
+            Write-Host "[Cost Method: Billing Periods] Retrieved $($periods.Count) period(s): $($periods.Name -join ', ')"
             foreach ($p in $periods) {
-                Write-Output "  - $($p.Name): $($p.StartDate) to $($p.EndDate)"
+                Write-Host "  - $($p.Name): $($p.StartDate) to $($p.EndDate)"
             }
         }
         else {
-            Write-Output "Get-AzBillingPeriod returned no results."
+            Write-Host "Get-AzBillingPeriod returned no results."
         }
     }
     catch {
@@ -362,8 +362,8 @@ function Get-DeploymentCosts {
     # Fallback: generate last 3 calendar months
     if ($periods.Count -eq 0) {
         $costMethod = "CalendarMonths"
-        Write-Output "[Cost Method: Calendar Months] Billing periods unavailable — using last 3 calendar months as fallback."
-        Write-Output "  This can happen with PAYG, MCA, or MSDN subscription types that don't expose billing periods via the API."
+        Write-Host "[Cost Method: Calendar Months] Billing periods unavailable — using last 3 calendar months as fallback."
+        Write-Host "  This can happen with PAYG, MCA, or MSDN subscription types that don't expose billing periods via the API."
         $now = Get-Date
         for ($m = 0; $m -lt 3; $m++) {
             $monthStart = $now.AddMonths(-$m - 1)
@@ -378,11 +378,11 @@ function Get-DeploymentCosts {
         # Sort oldest first
         $periods = $periods | Sort-Object Name
         foreach ($p in $periods) {
-            Write-Output "  - $($p.Name): $($p.StartDate) to $($p.EndDate)"
+            Write-Host "  - $($p.Name): $($p.StartDate) to $($p.EndDate)"
         }
     }
 
-    Write-Output "Cost query method: $costMethod | Periods: $($periods.Count)"
+    Write-Host "Cost query method: $costMethod | Periods: $($periods.Count)"
 
     $periodNames = @($periods | ForEach-Object { $_.Name })
 
@@ -393,7 +393,7 @@ function Get-DeploymentCosts {
         # Get the account resource IDs for this subscription from the passed-in list
         $subAccountIds = @($AccountResourceIds | Where-Object { $_ -match "(?i)/subscriptions/$subId/" })
         if ($subAccountIds.Count -eq 0) {
-            Write-Output "No CognitiveServices accounts in subscription '$subId' — skipping cost query."
+            Write-Host "No CognitiveServices accounts in subscription '$subId' — skipping cost query."
             continue
         }
 
@@ -402,7 +402,7 @@ function Get-DeploymentCosts {
             $startDate  = $period.StartDate
             $endDate    = $period.EndDate
 
-            Write-Output "Querying costs for subscription '$subId', period '$periodName' ($startDate to $endDate)..."
+            Write-Host "Querying costs for subscription '$subId', period '$periodName' ($startDate to $endDate)..."
 
             $scope = "/subscriptions/$subId"
 
@@ -432,11 +432,11 @@ function Get-DeploymentCosts {
             }
 
             if (-not $costResult -or -not $costResult.Row) {
-                Write-Output "  No cost rows returned."
+                Write-Host "  No cost rows returned."
                 continue
             }
 
-            Write-Output "  Returned $($costResult.Row.Count) cost row(s). Columns: $($costResult.Column.Name -join ', ')"
+            Write-Host "  Returned $($costResult.Row.Count) cost row(s). Columns: $($costResult.Column.Name -join ', ')"
 
             # Parse cost result columns — names vary by API version and query type
             $columns = $costResult.Column
@@ -444,7 +444,7 @@ function Get-DeploymentCosts {
             $resourceIdIndex  = -1
             $serviceNameIndex = -1
 
-            Write-Output "  Column names: $(($columns | ForEach-Object { "$($_.Name)($($_.Type))" }) -join ', ')"
+            Write-Host "  Column names: $(($columns | ForEach-Object { "$($_.Name)($($_.Type))" }) -join ', ')"
 
             for ($i = 0; $i -lt $columns.Count; $i++) {
                 $colName = $columns[$i].Name.ToLower()
@@ -470,7 +470,7 @@ function Get-DeploymentCosts {
                 continue
             }
 
-            Write-Output "  Using columns: cost=[$costIndex], resourceId=[$resourceIdIndex], service=[$serviceNameIndex]"
+            Write-Host "  Using columns: cost=[$costIndex], resourceId=[$resourceIdIndex], service=[$serviceNameIndex]"
 
             $periodRowCount = 0
             foreach ($row in $costResult.Row) {
@@ -502,7 +502,7 @@ function Get-DeploymentCosts {
 
                 if ($costAmount -gt 0) {
                     $periodRowCount++
-                    Write-Output "    $($serviceName): `$$([math]::Round($costAmount, 2)) — $rawResourceId"
+                    Write-Host "    $($serviceName): `$$([math]::Round($costAmount, 2)) — $rawResourceId"
                 }
 
                 if (-not $costs.ContainsKey($accountIdLower)) {
@@ -516,7 +516,7 @@ function Get-DeploymentCosts {
         }
     }
 
-    Write-Output "Cost query complete. Found cost data for $($costs.Count) account(s)."
+    Write-Host "Cost query complete. Found cost data for $($costs.Count) account(s)."
 
     return [PSCustomObject]@{
         Costs       = $costs
@@ -558,20 +558,20 @@ function Build-Report {
         [string[]]$BillingPeriodNames
     )
 
-    Write-Output "Building report for $($Deployments.Count) deployment(s)..."
+    Write-Host "Building report for $($Deployments.Count) deployment(s)..."
 
     if (-not $Costs) { $Costs = @{} }
     if (-not $BillingPeriodNames) { $BillingPeriodNames = @() }
 
     # Debug: show what cost keys we have vs what account IDs the deployments reference
     if ($Costs.Count -gt 0) {
-        Write-Output "Cost data keys ($($Costs.Count)):"
-        foreach ($key in $Costs.Keys) { Write-Output "  Cost key: $key" }
+        Write-Host "Cost data keys ($($Costs.Count)):"
+        foreach ($key in $Costs.Keys) { Write-Host "  Cost key: $key" }
     }
     $depAccountIds = @($Deployments | ForEach-Object { $_.AccountResourceId } | Where-Object { $_ } | Select-Object -Unique)
     if ($depAccountIds.Count -gt 0) {
-        Write-Output "Deployment account IDs ($($depAccountIds.Count)):"
-        foreach ($aid in $depAccountIds) { Write-Output "  Account:  $aid" }
+        Write-Host "Deployment account IDs ($($depAccountIds.Count)):"
+        foreach ($aid in $depAccountIds) { Write-Host "  Account:  $aid" }
     }
 
     $reportRows = [System.Collections.Generic.List[PSCustomObject]]::new()
@@ -620,7 +620,7 @@ function Build-Report {
     # Debug: show first row to verify data
     if ($reportRows.Count -gt 0) {
         $first = $reportRows[0]
-        Write-Output "First report row: Sub=$($first.SubscriptionName) RG=$($first.ResourceGroup) Type=$($first.ResourceType) Res=$($first.ResourceName) Deploy=$($first.DeploymentName) Model=$($first.ModelName) InUse=$($first.IsInUse)"
+        Write-Host "First report row: Sub=$($first.SubscriptionName) RG=$($first.ResourceGroup) Type=$($first.ResourceType) Res=$($first.ResourceName) Deploy=$($first.DeploymentName) Model=$($first.ModelName) InUse=$($first.IsInUse)"
     }
 
     # Generate CSV content
@@ -696,7 +696,7 @@ function Build-Report {
 
     $htmlContent = $htmlBuilder.ToString()
 
-    Write-Output "Report built: $($reportRows.Count) row(s), CSV length $($csvContent.Length), HTML length $($htmlContent.Length)."
+    Write-Host "Report built: $($reportRows.Count) row(s), CSV length $($csvContent.Length), HTML length $($htmlContent.Length)."
 
     return [PSCustomObject]@{
         CsvContent  = $csvContent
@@ -741,7 +741,7 @@ function Publish-Report {
         [string]$ContainerName
     )
 
-    Write-Output "Publishing reports to blob storage..."
+    Write-Host "Publishing reports to blob storage..."
 
     # Parse storage account name from resource ID
     # Pattern: /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.Storage/storageAccounts/{name}
@@ -782,7 +782,7 @@ function Publish-Report {
             -Force `
             -ErrorAction Stop | Out-Null
 
-        Write-Output "Uploaded CSV: $csvBlobName"
+        Write-Host "Uploaded CSV: $csvBlobName"
 
         # https://learn.microsoft.com/powershell/module/az.storage/set-azstorageblobcontent
         Set-AzStorageBlobContent `
@@ -794,7 +794,7 @@ function Publish-Report {
             -Force `
             -ErrorAction Stop | Out-Null
 
-        Write-Output "Uploaded HTML: $htmlBlobName"
+        Write-Host "Uploaded HTML: $htmlBlobName"
     }
     catch {
         throw "Failed to upload report to blob storage: $_"
@@ -805,7 +805,7 @@ function Publish-Report {
         if (Test-Path $tempHtmlPath) { Remove-Item $tempHtmlPath -Force -ErrorAction SilentlyContinue }
     }
 
-    Write-Output "Reports published to container '$ContainerName' in storage account '$storageAccountName'."
+    Write-Host "Reports published to container '$ContainerName' in storage account '$storageAccountName'."
 }
 #endregion Functions: Publish-Report
 
