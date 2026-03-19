@@ -309,51 +309,72 @@ resources
     }
     Write-Host "Found $($projectResults.Count) project(s) across $($accountProjectMap.Count) account(s)."
 
-    # Query project connections to find gateway endpoints.
-    # The "Target URI" shown in the Foundry portal comes from project connections,
-    # not from properties.endpoint on the project resource.
+    # Query connections to find gateway endpoints.
+    # The "Target URI" shown in the Foundry portal comes from connections,
+    # which can be at the project level or the account level.
     # https://learn.microsoft.com/rest/api/aifoundry/accountmanagement/project-connections
-    $projectGatewayMap = @{}
-    foreach ($proj in $projectResults) {
+    $gatewayMap = @{}
+
+    # Helper: query connections for a resource and check for gateway targets
+    function Find-GatewayInConnections {
+        param([string]$ResourceId, [string]$ResourceLabel)
         try {
-            $connUrl = "https://management.azure.com$($proj.id)/connections?api-version=2024-10-01"
+            $connUrl = "https://management.azure.com${ResourceId}/connections?api-version=2024-10-01"
             $connResp = Invoke-AzRestMethod -Uri $connUrl -Method GET -ErrorAction Stop
             if ($connResp.StatusCode -eq 200) {
                 $connections = ($connResp.Content | ConvertFrom-Json).value
-                Write-Host "  Project '$($proj.name)': $($connections.Count) connection(s)"
+                Write-Host "  ${ResourceLabel}: $($connections.Count) connection(s)"
                 foreach ($conn in $connections) {
                     $target = $null
                     if ($conn.properties -and $conn.properties.target) {
                         $target = $conn.properties.target
                     }
-                    # Log all connections for diagnostic visibility
                     $connCategory = if ($conn.properties.category) { $conn.properties.category } else { 'unknown' }
                     Write-Host "    Connection '$($conn.name)' (category=$connCategory) target=$target"
                     if ($target) {
                         $gw = Get-GatewayUrl -EndpointUrl $target
                         if ($gw) {
-                            # Found a gateway connection for this project
-                            $projIdLower = $proj.id.ToLower()
-                            $projectGatewayMap[$projIdLower] = $gw
-                            # Also map at the account level for deployments without project in ID
-                            if ($proj.id -match '(?i)(.*?/accounts/[^/]+)') {
-                                $acctKey = $Matches[1].ToLower()
-                                if (-not $projectGatewayMap.ContainsKey($acctKey)) {
-                                    $projectGatewayMap[$acctKey] = $gw
-                                }
-                            }
                             Write-Host "    ** Gateway detected: $gw"
-                            break
+                            return $gw
                         }
                     }
                 }
             }
-            else {
-                Write-Warning "  Connections query for '$($proj.name)' returned HTTP $($connResp.StatusCode)"
+            elseif ($connResp.StatusCode -ne 404) {
+                Write-Warning "  Connections query for '$ResourceLabel' returned HTTP $($connResp.StatusCode)"
             }
         }
         catch {
-            Write-Warning "  Could not query connections for project '$($proj.name)': $_"
+            Write-Verbose "  Could not query connections for '$ResourceLabel': $_"
+        }
+        return $null
+    }
+
+    # Check project-level connections first
+    Write-Host "Checking project connections for gateway endpoints..."
+    foreach ($proj in $projectResults) {
+        $gw = Find-GatewayInConnections -ResourceId $proj.id -ResourceLabel "Project '$($proj.name)'"
+        if ($gw) {
+            $gatewayMap[$proj.id.ToLower()] = $gw
+            # Also map at account level
+            if ($proj.id -match '(?i)(.*?/accounts/[^/]+)') {
+                $acctKey = $Matches[1].ToLower()
+                if (-not $gatewayMap.ContainsKey($acctKey)) {
+                    $gatewayMap[$acctKey] = $gw
+                }
+            }
+        }
+    }
+
+    # Check account-level connections for accounts that don't already have a gateway
+    Write-Host "Checking account connections for gateway endpoints..."
+    foreach ($account in $aiAccountResults) {
+        $acctIdLower = $account.id.ToLower()
+        if (-not $gatewayMap.ContainsKey($acctIdLower)) {
+            $gw = Find-GatewayInConnections -ResourceId $account.id -ResourceLabel "Account '$($account.name)'"
+            if ($gw) {
+                $gatewayMap[$acctIdLower] = $gw
+            }
         }
     }
 
@@ -489,24 +510,22 @@ resources
         $subscriptionName = $subscriptionNameCache[$dep.SubscriptionId]
         if (-not $subscriptionName) { $subscriptionName = $dep.SubscriptionId }
 
-        # Gateway detection: check project connections for gateway endpoints
+        # Gateway detection: check connections for gateway endpoints
         $gatewayUrl = ''
         if ($dep.ProjectEndpoint) {
-            # Deployment had a project-level endpoint directly
             $gatewayUrl = Get-GatewayUrl -EndpointUrl $dep.ProjectEndpoint
         }
         if (-not $gatewayUrl) {
-            # Check project gateway map (from connections API)
-            # First try project-level key, then account-level key
+            # Check gateway map (from connections API) — project key, then account key
             $depIdLower = $dep.DeploymentId.ToLower()
             if ($depIdLower -match '(?i)(.*?/accounts/[^/]+/projects/[^/]+)') {
                 $projKey = $Matches[1].ToLower()
-                if ($projectGatewayMap.ContainsKey($projKey)) {
-                    $gatewayUrl = $projectGatewayMap[$projKey]
+                if ($gatewayMap.ContainsKey($projKey)) {
+                    $gatewayUrl = $gatewayMap[$projKey]
                 }
             }
-            if (-not $gatewayUrl -and $projectGatewayMap.ContainsKey($acctIdLower)) {
-                $gatewayUrl = $projectGatewayMap[$acctIdLower]
+            if (-not $gatewayUrl -and $gatewayMap.ContainsKey($acctIdLower)) {
+                $gatewayUrl = $gatewayMap[$acctIdLower]
             }
         }
 
