@@ -307,7 +307,8 @@ gh issue create --title "Description of work" --label "feature"   # or --label "
 # 2. Create a feature or fix branch (include issue number)
 git checkout main && git pull
 git checkout -b feature/<issue-number>-<short-description>   # for new features
-git checkout -b fix/<issue-number>-<short-description>       # for bug fixes
+# Or, for bug fixes, use:
+# git checkout -b fix/<issue-number>-<short-description>
 
 # 3. Make changes, validate locally (see CI gate compliance above)
 
