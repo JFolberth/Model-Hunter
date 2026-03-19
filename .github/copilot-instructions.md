@@ -283,7 +283,34 @@ Do NOT commit code that would fail any of these checks. The CI workflow (`.githu
 
 Every effort — bug fix, feature, refactor, docs update — **must** have an associated GitHub Issue (work item). This is enforced by branch protection rules on `main`.
 
-- Before starting work, check if a relevant issue exists. If not, **create one** with a clear title and description.
+- Before starting work, check if a relevant issue exists. If not, **create one** with `gh issue create`.
 - Reference the issue in the PR (e.g., `Closes #42` or `Fixes #42` in the PR body).
-- Branch names should include the issue number (e.g., `42-fix-schedule-conflict`).
+- Branch names **must** include the issue number (e.g., `42-fix-schedule-conflict`).
 - Direct pushes to `main` are not allowed — all changes go through pull requests.
+
+### Git workflow (REQUIRED)
+
+Branch policies are enforced on `main`. **Never commit directly to main.** Follow this workflow:
+
+```bash
+# 1. Create or find a GitHub Issue
+gh issue create --title "Description of work"   # if none exists
+
+# 2. Create a feature branch (include issue number)
+git checkout main && git pull
+git checkout -b <issue-number>-<short-description>
+
+# 3. Make changes, validate locally (see CI gate compliance above)
+
+# 4. Commit with issue reference
+git add -A
+git commit -m "Description of change
+
+Closes #<issue-number>
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+
+# 5. Push and create PR
+git push -u origin <branch-name>
+gh pr create --base main --title "Title" --body "Closes #<issue-number>"
+```
