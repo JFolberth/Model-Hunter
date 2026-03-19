@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
@@ -20,6 +19,9 @@ jobs:
     name: Deploy Dev
     needs: build
     if: github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/_deploy.yml
     with:
       environment: dev
@@ -31,6 +33,9 @@ jobs:
     name: Deploy Prod
     needs: deploy-dev
     if: github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/_deploy.yml
     with:
       environment: prod
