@@ -409,83 +409,28 @@ resources
 
         if ($backendMatchedAccounts.Count -eq 0) { continue }
 
-        # Determine which specific accounts have AI Gateway APIs routing to them.
-        # AI Gateway routes traffic through APIs to backends via policies.
-        # We check global + API-level policies for references to SPECIFIC backends/accounts.
-        # Only accounts explicitly referenced in policies get AIGateway=Yes.
-        # https://learn.microsoft.com/rest/api/apimanagement/api/list-by-service
-        $apiMatchedAccounts = @{}  # accountName → $true
+        # Determine which accounts are behind an AI Gateway.
+        # When Foundry configures an AI Gateway, APIM creates an API whose name matches
+        # the CognitiveServices account name (e.g., API "models-foundry-rhyv62upwtqia"
+        # for account "models-foundry-rhyv62upwtqia"). This is the distinguishing criteria
+        # vs a manually configured APIM that has backends but generic API names.
+        # https://learn.microsoft.com/azure/api-management/genai-gateway-capabilities
+        $apiMatchedAccounts = @{}
         try {
             $apisUrl = "https://management.azure.com${apimId}/apis?api-version=2024-05-01"
             $apisResp = Invoke-AzRestMethod -Uri $apisUrl -Method GET -ErrorAction Stop
 
             if ($apisResp.StatusCode -eq 200) {
                 $apis = ($apisResp.Content | ConvertFrom-Json).value
-                $apis = @($apis | Where-Object { $_.properties.displayName -ne 'Echo API' -and $_.name -ne 'echo-api' })
-                Write-Host "    $($apis.Count) API(s) (excluding built-in)"
+                $apis = @($apis | Where-Object { $_.name -ne 'echo-api' })
 
-                if ($apis.Count -gt 0) {
-                    # Collect all policy content (global + per-API) to search for backend references.
-                    $allPolicyContent = ''
-
-                    # Global (all-APIs) policy
-                    # https://learn.microsoft.com/rest/api/apimanagement/policy/get
-                    try {
-                        $globalPolicyUrl = "https://management.azure.com${apimId}/policies/policy?api-version=2024-05-01"
-                        $gpResp = Invoke-AzRestMethod -Uri $globalPolicyUrl -Method GET -ErrorAction Stop
-                        if ($gpResp.StatusCode -eq 200) {
-                            $gpContent = ($gpResp.Content | ConvertFrom-Json).properties.value
-                            if ($gpContent) { $allPolicyContent += "`n$gpContent" }
-                        }
-                    }
-                    catch { }
-
-                    # Each API's policy
-                    foreach ($api in $apis) {
-                        try {
-                            $apiPolicyUrl = "https://management.azure.com${apimId}/apis/$($api.name)/policies/policy?api-version=2024-05-01"
-                            $apResp = Invoke-AzRestMethod -Uri $apiPolicyUrl -Method GET -ErrorAction Stop
-                            if ($apResp.StatusCode -eq 200) {
-                                $apContent = ($apResp.Content | ConvertFrom-Json).properties.value
-                                if ($apContent) { $allPolicyContent += "`n$apContent" }
-                            }
-                        }
-                        catch { }
-                    }
-
-                    # Match each backend-matched account individually against policies.
-                    # An account gets AIGateway=Yes only if ITS backend or name appears in a policy.
-                    foreach ($bEntry in $backendIdToAccount.GetEnumerator()) {
-                        if ($allPolicyContent -match [regex]::Escape($bEntry.Key)) {
-                            $apiMatchedAccounts[$bEntry.Value] = $true
-                            Write-Host "    Policy references backend '$($bEntry.Key)' → '$($bEntry.Value)' AI Gateway"
-                        }
-                    }
+                foreach ($api in $apis) {
+                    $apiNameLower = $api.name.ToLower()
+                    # Check if this API name matches a backend-matched account name
                     foreach ($acctEntry in $backendMatchedAccounts.GetEnumerator()) {
-                        if (-not $apiMatchedAccounts.ContainsKey($acctEntry.Key)) {
-                            if ($allPolicyContent -match [regex]::Escape($acctEntry.Key)) {
-                                $apiMatchedAccounts[$acctEntry.Key] = $true
-                                Write-Host "    Policy references account '$($acctEntry.Key)' → AI Gateway"
-                            }
-                        }
-                    }
-
-                    # Also check API serviceUrls for direct account hostname matches
-                    foreach ($api in $apis) {
-                        $svcUrl = $api.properties.serviceUrl
-                        if ($svcUrl) {
-                            try {
-                                $svcHost = ([System.Uri]$svcUrl).Host.ToLower()
-                                foreach ($acctEntry in $backendMatchedAccounts.GetEnumerator()) {
-                                    if (-not $apiMatchedAccounts.ContainsKey($acctEntry.Key)) {
-                                        if ($svcHost.StartsWith("$($acctEntry.Key).")) {
-                                            $apiMatchedAccounts[$acctEntry.Key] = $true
-                                            Write-Host "    API '$($api.name)' serviceUrl → '$($acctEntry.Key)' AI Gateway"
-                                        }
-                                    }
-                                }
-                            }
-                            catch { }
+                        if ($apiNameLower -eq $acctEntry.Key) {
+                            $apiMatchedAccounts[$acctEntry.Key] = $true
+                            Write-Host "    API '$($api.name)' matches account → AI Gateway"
                         }
                     }
                 }
@@ -495,7 +440,7 @@ resources
             Write-Warning "    Error checking APIs for APIM '$apimName': $_"
         }
 
-        # Build gateway map entries — per-account AIGateway based on individual policy matches
+        # Build gateway map entries
         foreach ($acctEntry in $backendMatchedAccounts.GetEnumerator()) {
             $acctId = $acctEntry.Value
             $aiGw = if ($apiMatchedAccounts.ContainsKey($acctEntry.Key)) { 'Yes' } else { 'No' }

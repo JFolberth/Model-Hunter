@@ -194,6 +194,7 @@ When `-StorageAccountResourceId` is omitted, reports are saved locally to `./out
 - **Logging**: Use `Write-Host` inside functions (avoids polluting return values — in PS 7+ Write-Host writes to Information stream, captured in Automation logs). Use `Write-Output` only in the main execution block. Use `Write-Warning` for non-fatal errors.
 - **No hardcoded values**: All configuration (subscription IDs, storage account, container name) comes from parameters.
 - **Authentication pattern**: The `#region Authentication` block handles `Connect-AzAccount -Identity` once. Functions assume they're already authenticated.
+- **No standalone scripts**: Do not commit debug, diagnostic, or utility scripts that are not part of the project's runtime (e.g., no `scripts/` directory). All PowerShell code must live in `src/ModelHunter.ps1` (the Runbook) or `tests/`. Temporary diagnostic scripts should be run locally and never committed.
 
 ### Azure Automation Runtime Environment (CRITICAL)
 
