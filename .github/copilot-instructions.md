@@ -306,8 +306,12 @@ gh issue create --title "Description of work" --label "feature"   # or --label "
 
 # 2. Create a feature or fix branch (include issue number)
 git checkout main && git pull
-git checkout -b feature/<issue-number>-<short-description>   # for new features
-git checkout -b fix/<issue-number>-<short-description>       # for bug fixes
+
+# For a new feature:
+git checkout -b feature/<issue-number>-<short-description>
+
+# OR, for a bug fix (run this INSTEAD of the feature command above):
+# git checkout -b fix/<issue-number>-<short-description>
 
 # 3. Make changes, validate locally (see CI gate compliance above)
 
@@ -334,7 +338,7 @@ When a PR is merged:
 **Before making new changes**, always check if the previous PR has been merged:
 ```bash
 git checkout main && git pull
-gh pr list   # should show no open PRs for your work
+gh pr status   # should show no open PRs associated with your current branch/user
 ```
 
 If the previous PR was merged, **create a new issue and a new branch** for any further changes — even if they are related to the same area. Do not push to a deleted branch or reopen a closed issue.
