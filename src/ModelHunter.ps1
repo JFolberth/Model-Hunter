@@ -158,6 +158,59 @@ else {
 }
 #endregion Validation
 
+#region Functions: Get-GatewayUrl
+function Get-GatewayUrl {
+    <#
+    .SYNOPSIS
+        Determines if a CognitiveServices endpoint is behind an API gateway.
+    .DESCRIPTION
+        Compares the account endpoint against standard Azure patterns:
+          https://<resource-name>.openai.azure.com
+          https://<resource-name>.cognitiveservices.azure.com
+        If the endpoint does not match, it is behind a gateway and the URL is returned.
+    .PARAMETER EndpointUrl
+        The properties.endpoint value from the CognitiveServices account.
+    .PARAMETER ResourceName
+        The CognitiveServices account name (used to match against standard patterns).
+    .OUTPUTS
+        String — the gateway URL if non-standard, or empty string if standard/null.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$EndpointUrl,
+
+        [Parameter(Mandatory)]
+        [string]$ResourceName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($EndpointUrl)) {
+        return ''
+    }
+
+    # Normalize: remove trailing slash for comparison
+    $normalized = $EndpointUrl.TrimEnd('/')
+
+    # Standard Azure endpoint patterns
+    # https://learn.microsoft.com/azure/ai-services/openai/reference
+    $standardPatterns = @(
+        "https://$($ResourceName).openai.azure.com",
+        "https://$($ResourceName).cognitiveservices.azure.com",
+        "https://$($ResourceName).services.ai.azure.com"
+    )
+
+    foreach ($pattern in $standardPatterns) {
+        if ($normalized -ieq $pattern) {
+            return ''
+        }
+    }
+
+    # Non-standard endpoint — behind a gateway
+    return $EndpointUrl
+}
+#endregion Functions: Get-GatewayUrl
+
 #region Functions: Get-ModelDeployments
 function Get-ModelDeployments {
     <#
@@ -196,11 +249,11 @@ function Get-ModelDeployments {
         }
     }
 
-    # Query 1: Get all CognitiveServices accounts (for kind classification)
+    # Query 1: Get all CognitiveServices accounts (for kind classification and endpoint)
     $accountQuery = @"
 resources
 | where type =~ 'microsoft.cognitiveservices/accounts'
-| project id, name, resourceGroup, subscriptionId, kind, location
+| project id, name, resourceGroup, subscriptionId, kind, location, endpoint = properties.endpoint
 "@
 
     Write-Host "Querying CognitiveServices accounts via Resource Graph..."
@@ -212,10 +265,12 @@ resources
         throw "Failed to query CognitiveServices accounts: $_"
     }
 
-    # Build a lookup of account ID (lowercase) → kind
+    # Build lookups: account ID (lowercase) → kind, account ID (lowercase) → endpoint
     $accountKindMap = @{}
+    $accountEndpointMap = @{}
     foreach ($account in $accountResults) {
         $accountKindMap[$account.id.ToLower()] = $account.kind
+        $accountEndpointMap[$account.id.ToLower()] = $account.endpoint
     }
 
     # Filter to only accounts that could have AI model deployments
@@ -377,6 +432,10 @@ resources
         $subscriptionName = $subscriptionNameCache[$dep.SubscriptionId]
         if (-not $subscriptionName) { $subscriptionName = $dep.SubscriptionId }
 
+        # Gateway detection: check if endpoint is non-standard (behind APIM or third-party)
+        $endpointUrl = if ($accountEndpointMap.ContainsKey($acctIdLower)) { $accountEndpointMap[$acctIdLower] } else { $null }
+        $gatewayUrl = Get-GatewayUrl -EndpointUrl $endpointUrl -ResourceName $dep.AccountName
+
         $deployments.Add([PSCustomObject]@{
             SubscriptionId    = $dep.SubscriptionId
             SubscriptionName  = $subscriptionName
@@ -391,6 +450,7 @@ resources
             Capacity          = $dep.Capacity
             LifecycleStatus   = $dep.LifecycleStatus
             RetirementDate    = $dep.RetirementDate
+            GatewayUrl        = $gatewayUrl
             AccountResourceId = $dep.AccountResourceId
         })
     }
@@ -698,6 +758,7 @@ function Build-Report {
             RetirementDate   = $retireDateStr
             SKU              = $dep.SKU
             Capacity         = $dep.Capacity
+            GatewayUrl       = $dep.GatewayUrl
             IsInUse          = $isInUse
         }
 
@@ -720,6 +781,7 @@ function Build-Report {
     $uniqueSubs = @($reportRows | ForEach-Object { $_.SubscriptionName } | Where-Object { $_ } | Select-Object -Unique)
     $totalCostSum = ($reportRows | ForEach-Object { if ($_.TotalCost) { [decimal]$_.TotalCost } else { 0 } } | Measure-Object -Sum).Sum
     $retiringCount = @($reportRows | Where-Object { $_.RetirementDate } ).Count
+    $gatewayCount = @($reportRows | Where-Object { $_.GatewayUrl } ).Count
     $retiringSoonCount = @($reportRows | Where-Object {
         if ($_.RetirementDate) {
             try { ([datetime]::ParseExact($_.RetirementDate, 'yyyy-MM', $null)).AddMonths(1).AddDays(-1) -le (Get-Date).AddDays(90) } catch { $false }
@@ -737,6 +799,7 @@ function Build-Report {
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Unique Models Deployed'; Value = $uniqueModels.Count })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Unique Models With Cost'; Value = $modelsWithCost.Count })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Models With Retirement Date'; Value = $retiringCount })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Deployments Behind Gateway'; Value = $gatewayCount })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Total Cost (All Periods)'; Value = "$Currency $('{0:N2}' -f $totalCostSum)" })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Currency'; Value = $Currency })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Billing Periods'; Value = ($BillingPeriodNames -join ', ') })
@@ -828,6 +891,7 @@ function Build-Report {
         'RetirementDate'  = 'Retirement'
         'SKU'              = 'SKU'
         'Capacity'         = 'Capacity'
+        'GatewayUrl'       = 'Gateway URL'
         'IsInUse'          = 'In Use'
         'TotalCost'        = 'Total Cost'
     }

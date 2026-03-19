@@ -122,4 +122,62 @@ Describe 'ModelHunter.ps1' {
             $result | Should -BeNullOrEmpty
         }
     }
+
+    Context 'Gateway Detection Logic' {
+        BeforeAll {
+            # Extract the Get-GatewayUrl function from the script without executing the main block.
+            # Parse the script AST and evaluate only the function definition.
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$null)
+            $funcAst = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Get-GatewayUrl' }, $true)
+            if ($funcAst.Count -eq 0) { throw 'Get-GatewayUrl function not found in script' }
+            . ([scriptblock]::Create($funcAst[0].Extent.Text))
+        }
+
+        It 'should return blank for standard OpenAI endpoint' {
+            $result = Get-GatewayUrl -EndpointUrl 'https://my-openai.openai.azure.com' -ResourceName 'my-openai'
+            $result | Should -Be ''
+        }
+
+        It 'should return blank for standard OpenAI endpoint with trailing slash' {
+            $result = Get-GatewayUrl -EndpointUrl 'https://my-openai.openai.azure.com/' -ResourceName 'my-openai'
+            $result | Should -Be ''
+        }
+
+        It 'should return blank for standard CognitiveServices endpoint' {
+            $result = Get-GatewayUrl -EndpointUrl 'https://my-resource.cognitiveservices.azure.com' -ResourceName 'my-resource'
+            $result | Should -Be ''
+        }
+
+        It 'should return blank for standard AI Services endpoint' {
+            $result = Get-GatewayUrl -EndpointUrl 'https://my-resource.services.ai.azure.com' -ResourceName 'my-resource'
+            $result | Should -Be ''
+        }
+
+        It 'should return the URL for APIM gateway endpoint' {
+            $apimUrl = 'https://apim-myorg.azure-api.net/models-foundry/openai'
+            $result = Get-GatewayUrl -EndpointUrl $apimUrl -ResourceName 'my-openai'
+            $result | Should -Be $apimUrl
+        }
+
+        It 'should return the URL for custom domain gateway' {
+            $customUrl = 'https://ai-gateway.contoso.com'
+            $result = Get-GatewayUrl -EndpointUrl $customUrl -ResourceName 'my-openai'
+            $result | Should -Be $customUrl
+        }
+
+        It 'should return blank for null endpoint' {
+            $result = Get-GatewayUrl -EndpointUrl $null -ResourceName 'my-openai'
+            $result | Should -Be ''
+        }
+
+        It 'should return blank for empty endpoint' {
+            $result = Get-GatewayUrl -EndpointUrl '' -ResourceName 'my-openai'
+            $result | Should -Be ''
+        }
+
+        It 'should be case-insensitive for standard patterns' {
+            $result = Get-GatewayUrl -EndpointUrl 'HTTPS://MY-OPENAI.OPENAI.AZURE.COM' -ResourceName 'my-openai'
+            $result | Should -Be ''
+        }
+    }
 }

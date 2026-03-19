@@ -98,6 +98,7 @@ Azure Cognitive Services deployment resource IDs follow these patterns:
 | ModelVersion | `properties.model.version` | From Resource Graph |
 | SKU | `sku.name` | e.g., "Standard", "GlobalStandard", "ProvisionedManaged" |
 | Capacity | `sku.capacity` | Provisioned TPM/units |
+| GatewayUrl | `properties.endpoint` | Non-standard endpoint URL if behind a gateway (APIM/third-party); blank if direct |
 
 ## Cost Analysis
 
@@ -228,6 +229,8 @@ Keep docs in sync with code changes:
 - **PowerShell module additions/changes** → update `docs/runbook-process.md`
 - **New parameters or config changes** → update `README.md` and `terraform.tfvars.sample`
 - **New resource types or classification changes** → update the Resource Classification section above
+- **New report fields or features** → update the Fields extracted per deployment table above, `README.md` features list, and `docs/runbook-process.md`
+- **Any code change** → update documentation and feature lists that reference the changed behavior. Never ship a feature without updating its docs.
 
 ### Local-first development workflow (REQUIRED)
 
