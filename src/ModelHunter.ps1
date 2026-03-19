@@ -254,11 +254,11 @@ function Get-ModelDeployments {
         }
     }
 
-    # Query 1: Get all CognitiveServices accounts (for kind classification and endpoint)
+    # Query 1: Get all CognitiveServices accounts (for kind classification)
     $accountQuery = @"
 resources
 | where type =~ 'microsoft.cognitiveservices/accounts'
-| project id, name, resourceGroup, subscriptionId, kind, location, endpoint = properties.endpoint
+| project id, name, resourceGroup, subscriptionId, kind, location
 "@
 
     Write-Host "Querying CognitiveServices accounts via Resource Graph..."
@@ -270,12 +270,10 @@ resources
         throw "Failed to query CognitiveServices accounts: $_"
     }
 
-    # Build lookups: account ID (lowercase) → kind, account ID (lowercase) → endpoint
+    # Build lookup: account ID (lowercase) → kind
     $accountKindMap = @{}
-    $accountEndpointMap = @{}
     foreach ($account in $accountResults) {
         $accountKindMap[$account.id.ToLower()] = $account.kind
-        $accountEndpointMap[$account.id.ToLower()] = $account.endpoint
     }
 
     # Filter to only accounts that could have AI model deployments
@@ -287,7 +285,7 @@ resources
     $projectQuery = @"
 resources
 | where type =~ 'microsoft.cognitiveservices/accounts/projects'
-| project id, name, subscriptionId, endpoint = properties.endpoint
+| project id, name, subscriptionId
 "@
     try {
         $projectResults = Search-AzGraph -Query $projectQuery -Subscription $SubscriptionIds -ErrorAction Stop
@@ -298,9 +296,7 @@ resources
     }
 
     # Build lookup: account ID (lowercase) → array of project names
-    # Build lookup: project ID (lowercase) → endpoint
     $accountProjectMap = @{}
-    $projectEndpointMap = @{}
     foreach ($proj in $projectResults) {
         if ($proj.id -match '(?i)(.*?/accounts/[^/]+)/projects/([^/]+)') {
             $parentAccountId = $Matches[1].ToLower()
@@ -309,35 +305,48 @@ resources
                 $accountProjectMap[$parentAccountId] = @()
             }
             $accountProjectMap[$parentAccountId] += $projectName
-            # Store project endpoint keyed by project ID
-            $projectEndpointMap[$proj.id.ToLower()] = $proj.endpoint
-            Write-Verbose "  Project '$projectName' endpoint: $($proj.endpoint)"
         }
     }
     Write-Host "Found $($projectResults.Count) project(s) across $($accountProjectMap.Count) account(s)."
 
-    # If Resource Graph didn't return endpoints for projects, fetch via ARM API
-    $projectsMissingEndpoint = @($projectEndpointMap.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) })
-    if ($projectsMissingEndpoint.Count -gt 0 -and $projectResults.Count -gt 0) {
-        Write-Host "Fetching project endpoints via ARM API ($($projectsMissingEndpoint.Count) missing from Resource Graph)..."
-        foreach ($proj in $projectResults) {
-            $projIdLower = $proj.id.ToLower()
-            if ([string]::IsNullOrWhiteSpace($projectEndpointMap[$projIdLower])) {
-                try {
-                    # https://learn.microsoft.com/rest/api/aiservices/accountmanagement/accounts/get
-                    $projResp = Invoke-AzRestMethod -Uri "https://management.azure.com$($proj.id)?api-version=2024-10-01" -Method GET -ErrorAction Stop
-                    if ($projResp.StatusCode -eq 200) {
-                        $projData = $projResp.Content | ConvertFrom-Json
-                        if ($projData.properties.endpoint) {
-                            $projectEndpointMap[$projIdLower] = $projData.properties.endpoint
-                            Write-Host "  Retrieved endpoint for '$($proj.name)': $($projData.properties.endpoint)"
+    # Query project connections to find gateway endpoints.
+    # The "Target URI" shown in the Foundry portal comes from project connections,
+    # not from properties.endpoint on the project resource.
+    # https://learn.microsoft.com/rest/api/aifoundry/accountmanagement/project-connections
+    $projectGatewayMap = @{}
+    foreach ($proj in $projectResults) {
+        try {
+            $connUrl = "https://management.azure.com$($proj.id)/connections?api-version=2024-10-01"
+            $connResp = Invoke-AzRestMethod -Uri $connUrl -Method GET -ErrorAction Stop
+            if ($connResp.StatusCode -eq 200) {
+                $connections = ($connResp.Content | ConvertFrom-Json).value
+                foreach ($conn in $connections) {
+                    $target = $null
+                    if ($conn.properties -and $conn.properties.target) {
+                        $target = $conn.properties.target
+                    }
+                    if ($target) {
+                        $gw = Get-GatewayUrl -EndpointUrl $target
+                        if ($gw) {
+                            # Found a gateway connection for this project
+                            $projIdLower = $proj.id.ToLower()
+                            $projectGatewayMap[$projIdLower] = $gw
+                            # Also map at the account level for deployments without project in ID
+                            if ($proj.id -match '(?i)(.*?/accounts/[^/]+)') {
+                                $acctKey = $Matches[1].ToLower()
+                                if (-not $projectGatewayMap.ContainsKey($acctKey)) {
+                                    $projectGatewayMap[$acctKey] = $gw
+                                }
+                            }
+                            Write-Host "  Gateway found for project '$($proj.name)': $gw"
+                            break
                         }
                     }
                 }
-                catch {
-                    Write-Warning "  Could not fetch endpoint for project '$($proj.name)': $_"
-                }
             }
+        }
+        catch {
+            Write-Warning "  Could not query connections for project '$($proj.name)': $_"
         }
     }
 
@@ -473,28 +482,26 @@ resources
         $subscriptionName = $subscriptionNameCache[$dep.SubscriptionId]
         if (-not $subscriptionName) { $subscriptionName = $dep.SubscriptionId }
 
-        # Gateway detection: prefer project endpoint (where APIM gateway lives) over account endpoint.
-        # Deployments listed at the account level may not have /projects/ in their ID,
-        # so also check project endpoints for this account.
-        $endpointUrl = $null
+        # Gateway detection: check project connections for gateway endpoints
+        $gatewayUrl = ''
         if ($dep.ProjectEndpoint) {
-            $endpointUrl = $dep.ProjectEndpoint
-        } else {
-            # Check all project endpoints for this account
-            $acctProjectEndpoints = @($projectEndpointMap.GetEnumerator() | Where-Object { $_.Key -like "$acctIdLower/projects/*" } | ForEach-Object { $_.Value } | Where-Object { $_ })
-            foreach ($pe in $acctProjectEndpoints) {
-                $gw = Get-GatewayUrl -EndpointUrl $pe
-                if ($gw) {
-                    # Found a non-standard project endpoint — use it
-                    $endpointUrl = $pe
-                    break
+            # Deployment had a project-level endpoint directly
+            $gatewayUrl = Get-GatewayUrl -EndpointUrl $dep.ProjectEndpoint
+        }
+        if (-not $gatewayUrl) {
+            # Check project gateway map (from connections API)
+            # First try project-level key, then account-level key
+            $depIdLower = $dep.DeploymentId.ToLower()
+            if ($depIdLower -match '(?i)(.*?/accounts/[^/]+/projects/[^/]+)') {
+                $projKey = $Matches[1].ToLower()
+                if ($projectGatewayMap.ContainsKey($projKey)) {
+                    $gatewayUrl = $projectGatewayMap[$projKey]
                 }
             }
-            if (-not $endpointUrl -and $accountEndpointMap.ContainsKey($acctIdLower)) {
-                $endpointUrl = $accountEndpointMap[$acctIdLower]
+            if (-not $gatewayUrl -and $projectGatewayMap.ContainsKey($acctIdLower)) {
+                $gatewayUrl = $projectGatewayMap[$acctIdLower]
             }
         }
-        $gatewayUrl = Get-GatewayUrl -EndpointUrl $endpointUrl
 
         $deployments.Add([PSCustomObject]@{
             SubscriptionId    = $dep.SubscriptionId
