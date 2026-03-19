@@ -24,9 +24,13 @@ The `Get-ModelDeployments` function queries Azure Resource Graph for all Cogniti
 Search-AzGraph -Query $query -Subscription $SubscriptionIds
 ```
 
-The Resource Graph query targets `microsoft.cognitiveservices/accounts` and joins with their `/deployments` sub-resources. Results include the account `kind`, deployment `properties.model.name`, `properties.model.version`, `sku.name`, and `sku.capacity`.
+The Resource Graph query targets `microsoft.cognitiveservices/accounts` and joins with their `/deployments` sub-resources. Results include the account `kind`, `properties.endpoint`, deployment `properties.model.name`, `properties.model.version`, `sku.name`, and `sku.capacity`.
 
 Subscription names are cached via `Get-AzSubscription` to avoid repeated lookups.
+
+#### Gateway Detection
+
+The `Get-GatewayUrl` function determines if a model is behind an API gateway by first preferring any project-level endpoint, and if none exists, falling back to the account's `properties.endpoint`. The selected endpoint is compared against standard Azure patterns (`<name>.openai.azure.com`, `<name>.cognitiveservices.azure.com`, `<name>.services.ai.azure.com`). If the endpoint does not match any standard pattern, the URL is returned as the `GatewayUrl` field — indicating the model is accessed through APIM or a third-party gateway. If the endpoint is standard or unavailable, `GatewayUrl` is blank.
 
 ### 3. Resource ID Parsing and Classification
 
@@ -128,6 +132,7 @@ Files are named with a timestamp (e.g., `model-discovery-2025-01-15-143022.csv`)
 | ModelVersion | Model version string |
 | SKU | Deployment SKU (e.g., Standard, GlobalStandard, ProvisionedManaged) |
 | Capacity | Provisioned TPM/units |
+| GatewayUrl | API gateway URL if model is behind APIM or third-party gateway; blank if direct |
 | IsInUse | `True` if any non-zero cost exists across billing periods |
 | Cost_{period} | Cost for each billing period (e.g., `Cost_202503`) |
 | TotalCost | Sum of all period costs |

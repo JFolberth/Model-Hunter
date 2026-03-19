@@ -158,6 +158,64 @@ else {
 }
 #endregion Validation
 
+#region Functions: Get-GatewayUrl
+function Get-GatewayUrl {
+    <#
+    .SYNOPSIS
+        Determines if a CognitiveServices endpoint is behind an API gateway.
+    .DESCRIPTION
+        Checks if the endpoint matches standard Azure domain suffixes:
+          *.openai.azure.com
+          *.cognitiveservices.azure.com
+          *.services.ai.azure.com
+        If the endpoint does not match any standard suffix, it is behind a gateway
+        (e.g., APIM or third-party proxy) and the URL is returned.
+    .PARAMETER EndpointUrl
+        The properties.endpoint value from the CognitiveServices account or project.
+    .OUTPUTS
+        String — the gateway URL if non-standard, or empty string if standard/null.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$EndpointUrl
+    )
+
+    if ([string]::IsNullOrWhiteSpace($EndpointUrl)) {
+        return ''
+    }
+
+    # Standard Azure endpoint domain suffixes
+    # https://learn.microsoft.com/azure/ai-services/openai/reference
+    # https://learn.microsoft.com/azure/ai-services/endpoints
+    $standardSuffixes = @(
+        '.openai.azure.com',
+        '.cognitiveservices.azure.com',
+        '.services.ai.azure.com'
+    )
+
+    # Extract the host from the URL
+    try {
+        $uri = [System.Uri]$EndpointUrl
+        $host_ = $uri.Host.ToLower()
+    }
+    catch {
+        # If URL can't be parsed, treat as gateway
+        return $EndpointUrl
+    }
+
+    foreach ($suffix in $standardSuffixes) {
+        if ($host_.EndsWith($suffix.ToLower())) {
+            return ''
+        }
+    }
+
+    # Non-standard endpoint — behind a gateway
+    return $EndpointUrl
+}
+#endregion Functions: Get-GatewayUrl
+
 #region Functions: Get-ModelDeployments
 function Get-ModelDeployments {
     <#
@@ -212,7 +270,7 @@ resources
         throw "Failed to query CognitiveServices accounts: $_"
     }
 
-    # Build a lookup of account ID (lowercase) → kind
+    # Build lookup: account ID (lowercase) → kind
     $accountKindMap = @{}
     foreach ($account in $accountResults) {
         $accountKindMap[$account.id.ToLower()] = $account.kind
@@ -222,7 +280,7 @@ resources
     $aiAccountResults = @($accountResults | Where-Object { $_.kind -in @('AIServices', 'OpenAI') })
     Write-Host "Found $($accountResults.Count) CognitiveServices account(s), $($aiAccountResults.Count) AI-capable (AIServices/OpenAI)."
 
-    # Query projects to map account → project names
+    # Query projects to map account → project names and project endpoints
     # https://learn.microsoft.com/azure/templates/microsoft.cognitiveservices/accounts/projects
     $projectQuery = @"
 resources
@@ -250,6 +308,162 @@ resources
         }
     }
     Write-Host "Found $($projectResults.Count) project(s) across $($accountProjectMap.Count) account(s)."
+
+    # Discover APIM AI Gateways by querying API Management resources and their backends/APIs.
+    # When Foundry enrolls a project in an AI Gateway, APIM backends point to the
+    # CognitiveServices account endpoints. We match backend resourceIds to discovered accounts.
+    # Two indicators per account:
+    #   - AIGateway: "Yes" if account has a matching API in service/apis (fully integrated)
+    #   - APIMConfigured: "Yes" if account has a matching backend in service/backends (defined in APIM)
+    # https://learn.microsoft.com/azure/api-management/genai-gateway-capabilities
+    $gatewayMap = @{}
+
+    $apimQuery = @"
+resources
+| where type =~ 'microsoft.apimanagement/service'
+| project id, name, resourceGroup, subscriptionId, properties
+"@
+
+    Write-Host "Querying API Management resources for AI Gateway detection..."
+    try {
+        # https://learn.microsoft.com/powershell/module/az.resourcegraph/search-azgraph
+        $apimResults = Search-AzGraph -Query $apimQuery -Subscription $SubscriptionIds -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Could not query APIM resources: $_"
+        $apimResults = @()
+    }
+    Write-Host "Found $($apimResults.Count) API Management instance(s)."
+
+    # Build lookups for matching: account name → ID, and account ID → name
+    $accountNameToId = @{}
+    $accountIdToName = @{}
+    foreach ($account in $aiAccountResults) {
+        $accountNameToId[$account.name.ToLower()] = $account.id.ToLower()
+        $accountIdToName[$account.id.ToLower()] = $account.name.ToLower()
+    }
+
+    foreach ($apim in $apimResults) {
+        $apimId = $apim.id
+        $apimName = $apim.name
+        $apimGatewayUrl = if ($apim.properties.gatewayUrl) { $apim.properties.gatewayUrl } else { $null }
+
+        if (-not $apimGatewayUrl) { continue }
+        Write-Host "  APIM '$apimName' gateway=$apimGatewayUrl"
+
+        # Collect backends that match known AI accounts.
+        # Match by properties.resourceId (ARM resource ID) first, then hostname fallback.
+        # https://learn.microsoft.com/rest/api/apimanagement/backend/list-by-service
+        # https://learn.microsoft.com/azure/api-management/backends
+        $backendMatchedAccounts = @{}  # accountName → accountId
+        $backendIdToAccount = @{}      # APIM backend name → accountName (for API policy matching)
+        try {
+            $backendsUrl = "https://management.azure.com${apimId}/backends?api-version=2024-05-01"
+            $backendsResp = Invoke-AzRestMethod -Uri $backendsUrl -Method GET -ErrorAction Stop
+
+            if ($backendsResp.StatusCode -eq 200) {
+                $backends = ($backendsResp.Content | ConvertFrom-Json).value
+                Write-Host "    $($backends.Count) backend(s)"
+
+                foreach ($backend in $backends) {
+                    $backendName = $backend.name
+                    $backendUrl = $backend.properties.url
+                    $backendResourceId = $backend.properties.resourceId
+
+                    # Primary match: backend resourceId contains a known account resource ID
+                    $matched = $false
+                    if ($backendResourceId) {
+                        $ridLower = $backendResourceId.ToLower()
+                        foreach ($acctEntry in $accountIdToName.GetEnumerator()) {
+                            if ($ridLower -eq $acctEntry.Key -or $ridLower.StartsWith("$($acctEntry.Key)/")) {
+                                $backendMatchedAccounts[$acctEntry.Value] = $acctEntry.Key
+                                $backendIdToAccount[$backendName] = $acctEntry.Value
+                                Write-Host "    Backend '$backendName' → account '$($acctEntry.Value)' (via resourceId)"
+                                $matched = $true
+                                break
+                            }
+                        }
+                    }
+
+                    # Fallback: match backend URL hostname to account name
+                    if (-not $matched -and $backendUrl) {
+                        try {
+                            $backendHost = ([System.Uri]$backendUrl).Host.ToLower()
+                            foreach ($acctEntry in $accountNameToId.GetEnumerator()) {
+                                if ($backendHost.StartsWith("$($acctEntry.Key).")) {
+                                    $backendMatchedAccounts[$acctEntry.Key] = $acctEntry.Value
+                                    $backendIdToAccount[$backendName] = $acctEntry.Key
+                                    Write-Host "    Backend '$backendName' → account '$($acctEntry.Key)' (via URL)"
+                                    break
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Warning "    Error listing backends for APIM '$apimName': $_"
+        }
+
+        if ($backendMatchedAccounts.Count -eq 0) { continue }
+
+        # Determine which accounts are behind an AI Gateway.
+        # When Foundry configures an AI Gateway, APIM creates an API whose name matches
+        # the CognitiveServices account name (e.g., API "models-foundry-rhyv62upwtqia"
+        # for account "models-foundry-rhyv62upwtqia"). This is the distinguishing criteria
+        # vs a manually configured APIM that has backends but generic API names.
+        # https://learn.microsoft.com/azure/api-management/genai-gateway-capabilities
+        $apiMatchedAccounts = @{}
+        try {
+            $apisUrl = "https://management.azure.com${apimId}/apis?api-version=2024-05-01"
+            $apisResp = Invoke-AzRestMethod -Uri $apisUrl -Method GET -ErrorAction Stop
+
+            if ($apisResp.StatusCode -eq 200) {
+                $apis = ($apisResp.Content | ConvertFrom-Json).value
+                $apis = @($apis | Where-Object { $_.name -ne 'echo-api' })
+
+                foreach ($api in $apis) {
+                    $apiNameLower = $api.name.ToLower()
+                    # Check if this API name matches a backend-matched account name
+                    foreach ($acctEntry in $backendMatchedAccounts.GetEnumerator()) {
+                        if ($apiNameLower -eq $acctEntry.Key) {
+                            $apiMatchedAccounts[$acctEntry.Key] = $true
+                            Write-Host "    API '$($api.name)' matches account → AI Gateway"
+                        }
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Warning "    Error checking APIs for APIM '$apimName': $_"
+        }
+
+        # Build gateway map entries
+        foreach ($acctEntry in $backendMatchedAccounts.GetEnumerator()) {
+            $acctId = $acctEntry.Value
+            $aiGw = if ($apiMatchedAccounts.ContainsKey($acctEntry.Key)) { 'Yes' } else { 'No' }
+            if (-not $gatewayMap.ContainsKey($acctId)) {
+                $gatewayMap[$acctId] = [PSCustomObject]@{
+                    Url            = $apimGatewayUrl
+                    AIGateway      = $aiGw
+                    APIMConfigured = 'Yes'
+                }
+                Write-Host "    >> Account '$($acctEntry.Key)': AIGateway=$aiGw APIMConfigured=Yes"
+            }
+        }
+    }
+
+    if ($gatewayMap.Count -gt 0) {
+        Write-Host "Gateway map ($($gatewayMap.Count) entries):"
+        foreach ($entry in $gatewayMap.GetEnumerator()) {
+            Write-Host "  $($entry.Key) → AIGateway=$($entry.Value.AIGateway) APIM=$($entry.Value.Url)"
+        }
+    }
+    else {
+        Write-Host "No AI gateways detected via APIM."
+    }
 
     # Query 2: For each account, list deployments via ARM API
     # Resource Graph may miss some deployment types (Global Standard, Data Zone, etc.)
@@ -313,8 +527,8 @@ resources
                         }
                         # Check for project in deployment ID
                         $projName = $null
-                        if ($d.id -match '(?i)/projects/([^/]+)') {
-                            $projName = $Matches[1]
+                        if ($d.id -match '(?i)(.*?/accounts/[^/]+/projects/([^/]+))') {
+                            $projName = $Matches[2]
                         }
 
                         # Look up lifecycle info for this model+version
@@ -377,6 +591,17 @@ resources
         $subscriptionName = $subscriptionNameCache[$dep.SubscriptionId]
         if (-not $subscriptionName) { $subscriptionName = $dep.SubscriptionId }
 
+        # Gateway detection: check if this account is in an APIM AI Gateway.
+        # The gatewayMap is built from APIM backends/APIs → CognitiveServices account matching.
+        $gatewayUrl = ''
+        $aiGateway = 'No'
+        $apimConfigured = 'No'
+        if ($gatewayMap.ContainsKey($acctIdLower)) {
+            $gatewayUrl = $gatewayMap[$acctIdLower].Url
+            $aiGateway = $gatewayMap[$acctIdLower].AIGateway
+            $apimConfigured = $gatewayMap[$acctIdLower].APIMConfigured
+        }
+
         $deployments.Add([PSCustomObject]@{
             SubscriptionId    = $dep.SubscriptionId
             SubscriptionName  = $subscriptionName
@@ -391,6 +616,9 @@ resources
             Capacity          = $dep.Capacity
             LifecycleStatus   = $dep.LifecycleStatus
             RetirementDate    = $dep.RetirementDate
+            GatewayUrl        = $gatewayUrl
+            AIGateway         = $aiGateway
+            APIMConfigured    = $apimConfigured
             AccountResourceId = $dep.AccountResourceId
         })
     }
@@ -698,6 +926,9 @@ function Build-Report {
             RetirementDate   = $retireDateStr
             SKU              = $dep.SKU
             Capacity         = $dep.Capacity
+            GatewayUrl       = $dep.GatewayUrl
+            AIGateway        = $dep.AIGateway
+            APIMConfigured   = $dep.APIMConfigured
             IsInUse          = $isInUse
         }
 
@@ -720,6 +951,9 @@ function Build-Report {
     $uniqueSubs = @($reportRows | ForEach-Object { $_.SubscriptionName } | Where-Object { $_ } | Select-Object -Unique)
     $totalCostSum = ($reportRows | ForEach-Object { if ($_.TotalCost) { [decimal]$_.TotalCost } else { 0 } } | Measure-Object -Sum).Sum
     $retiringCount = @($reportRows | Where-Object { $_.RetirementDate } ).Count
+    $gatewayCount = @($reportRows | Where-Object { $_.GatewayUrl } ).Count
+    $aiGatewayCount = @($reportRows | Where-Object { $_.AIGateway -eq 'Yes' } ).Count
+    $apimConfiguredCount = @($reportRows | Where-Object { $_.APIMConfigured -eq 'Yes' } ).Count
     $retiringSoonCount = @($reportRows | Where-Object {
         if ($_.RetirementDate) {
             try { ([datetime]::ParseExact($_.RetirementDate, 'yyyy-MM', $null)).AddMonths(1).AddDays(-1) -le (Get-Date).AddDays(90) } catch { $false }
@@ -730,6 +964,7 @@ function Build-Report {
     $summaryRows = [System.Collections.Generic.List[PSCustomObject]]::new()
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Report Generated'; Value = $timestamp })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Subscriptions Scanned'; Value = $uniqueSubs.Count })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Deployments Behind Gateway'; Value = $gatewayCount })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'AI Accounts Found'; Value = $uniqueAccounts.Count })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Total Deployments'; Value = $totalDeployments })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Deployments With Cost'; Value = $deploymentsWithCost })
@@ -737,6 +972,8 @@ function Build-Report {
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Unique Models Deployed'; Value = $uniqueModels.Count })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Unique Models With Cost'; Value = $modelsWithCost.Count })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Models With Retirement Date'; Value = $retiringCount })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'AI Gateway (Yes)'; Value = $aiGatewayCount })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'APIM Configured (Yes)'; Value = $apimConfiguredCount })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Total Cost (All Periods)'; Value = "$Currency $('{0:N2}' -f $totalCostSum)" })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Currency'; Value = $Currency })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Billing Periods'; Value = ($BillingPeriodNames -join ', ') })
@@ -794,6 +1031,7 @@ function Build-Report {
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Deployments No Cost</div><div class=`"value red`">$deploymentsNoCost</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Unique Models</div><div class=`"value blue`">$($uniqueModels.Count)</div><div class=`"detail`">$($modelsWithCost.Count) with cost</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">AI Accounts</div><div class=`"value`">$($uniqueAccounts.Count)</div></div>")
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">AI Gateway</div><div class=`"value$(if ($aiGatewayCount -gt 0) { ' blue' })`">$aiGatewayCount</div><div class=`"detail`">$apimConfiguredCount configured in APIM</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Retiring in 90 Days</div><div class=`"value$(if ($retiringSoonCount -gt 0) { ' red' })`">$retiringSoonCount</div><div class=`"detail`">$retiringCount total with retirement date</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Total Cost ($Currency)</div><div class=`"value green`">$('{0:N2}' -f $totalCostSum)</div><div class=`"detail`">across $($BillingPeriodNames.Count) period(s)</div></div>")
     [void]$htmlBuilder.AppendLine('  </div>')
@@ -808,7 +1046,7 @@ function Build-Report {
     $headerColumns = @(
         'SubscriptionName', 'ResourceGroup', 'ResourceType', 'ResourceName',
         'ProjectName', 'DeploymentName', 'ModelName', 'ModelVersion',
-        'LifecycleStatus', 'RetirementDate', 'SKU', 'Capacity', 'IsInUse'
+        'LifecycleStatus', 'RetirementDate', 'SKU', 'Capacity', 'AIGateway', 'APIMConfigured', 'GatewayUrl', 'IsInUse'
     )
     foreach ($periodName in $BillingPeriodNames) {
         $headerColumns += "Cost_$periodName"
@@ -828,6 +1066,9 @@ function Build-Report {
         'RetirementDate'  = 'Retirement'
         'SKU'              = 'SKU'
         'Capacity'         = 'Capacity'
+        'AIGateway'        = 'AI Gateway'
+        'APIMConfigured'   = 'APIM Configured'
+        'GatewayUrl'       = 'Gateway URL'
         'IsInUse'          = 'In Use'
         'TotalCost'        = 'Total Cost'
     }

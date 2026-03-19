@@ -98,6 +98,9 @@ Azure Cognitive Services deployment resource IDs follow these patterns:
 | ModelVersion | `properties.model.version` | From Resource Graph |
 | SKU | `sku.name` | e.g., "Standard", "GlobalStandard", "ProvisionedManaged" |
 | Capacity | `sku.capacity` | Provisioned TPM/units |
+| GatewayUrl | APIM `properties.gatewayUrl` | APIM gateway URL if account is configured in APIM; blank otherwise |
+| AIGateway | APIM `service/apis` match | "Yes" if account has a matching API in APIM (fully integrated AI Gateway); "No" otherwise |
+| APIMConfigured | APIM `service/backends` match | "Yes" if account has a matching backend in APIM (defined in APIM); "No" otherwise |
 
 ## Cost Analysis
 
@@ -191,6 +194,7 @@ When `-StorageAccountResourceId` is omitted, reports are saved locally to `./out
 - **Logging**: Use `Write-Host` inside functions (avoids polluting return values — in PS 7+ Write-Host writes to Information stream, captured in Automation logs). Use `Write-Output` only in the main execution block. Use `Write-Warning` for non-fatal errors.
 - **No hardcoded values**: All configuration (subscription IDs, storage account, container name) comes from parameters.
 - **Authentication pattern**: The `#region Authentication` block handles `Connect-AzAccount -Identity` once. Functions assume they're already authenticated.
+- **No standalone scripts**: Do not commit debug, diagnostic, or utility scripts that are not part of the project's runtime (e.g., no `scripts/` directory). All PowerShell code must live in `src/ModelHunter.ps1` (the Runbook) or `tests/`. Temporary diagnostic scripts should be run locally and never committed.
 
 ### Azure Automation Runtime Environment (CRITICAL)
 
@@ -228,6 +232,8 @@ Keep docs in sync with code changes:
 - **PowerShell module additions/changes** → update `docs/runbook-process.md`
 - **New parameters or config changes** → update `README.md` and `terraform.tfvars.sample`
 - **New resource types or classification changes** → update the Resource Classification section above
+- **New report fields or features** → update the Fields extracted per deployment table above, `README.md` features list, and `docs/runbook-process.md`
+- **Any code change** → update documentation and feature lists that reference the changed behavior. Never ship a feature without updating its docs.
 
 ### Local-first development workflow (REQUIRED)
 
