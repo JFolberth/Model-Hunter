@@ -49,6 +49,10 @@ jobs:
         run: tflint --recursive
 
       # ── Publish Artifacts ──
+      - name: Clean Terraform working directory
+        working-directory: infra
+        run: rm -rf .terraform
+
       - name: Upload infra artifact
         uses: actions/upload-artifact@v4
         with:

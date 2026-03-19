@@ -3,9 +3,9 @@ name: Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
@@ -18,6 +18,10 @@ jobs:
   deploy-dev:
     name: Deploy Dev
     needs: build
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/_deploy.yml
     with:
       environment: dev
@@ -28,6 +32,10 @@ jobs:
   deploy-prod:
     name: Deploy Prod
     needs: deploy-dev
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/_deploy.yml
     with:
       environment: prod

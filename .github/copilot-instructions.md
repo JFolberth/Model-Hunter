@@ -261,7 +261,7 @@ Do not update the Runbook source in Azure until the script has been executed suc
 
 ### CI gate compliance (REQUIRED)
 
-Every change **must** pass the CI workflow before being committed. Before committing, run the full CI check suite locally:
+Every change **must** pass the CI workflow before being committed. Before committing, run the full CI check suite locally. **This is mandatory — do not skip any step.**
 
 ```bash
 # 1. Pester tests
@@ -273,9 +273,16 @@ cd infra/ && terraform fmt -recursive -check
 # 3. Terraform validation
 terraform init -backend=false && terraform validate
 
-# 4. TFLint
+# 4. TFLint (MUST pass with zero warnings before committing any .tf changes)
 tflint --init && tflint --recursive
 ```
+
+**TFLint is not optional.** Every Terraform module must have:
+- `required_version = ">= 1.6"` in the `terraform {}` block
+- Version constraints on all providers (e.g., `version = "~> 2.0"` for azapi)
+- `source` specified for all providers (e.g., `source = "Azure/azapi"`)
+
+Run `tflint --recursive` from the `infra/` directory after every `.tf` change. A tflint failure will block the CI pipeline.
 
 Do NOT commit code that would fail any of these checks. The CI workflow (`.github/workflows/ci.yml`) runs these in parallel on every PR — a failure blocks the merge.
 
@@ -283,7 +290,34 @@ Do NOT commit code that would fail any of these checks. The CI workflow (`.githu
 
 Every effort — bug fix, feature, refactor, docs update — **must** have an associated GitHub Issue (work item). This is enforced by branch protection rules on `main`.
 
-- Before starting work, check if a relevant issue exists. If not, **create one** with a clear title and description.
+- Before starting work, check if a relevant issue exists. If not, **create one** with `gh issue create`.
 - Reference the issue in the PR (e.g., `Closes #42` or `Fixes #42` in the PR body).
-- Branch names should include the issue number (e.g., `42-fix-schedule-conflict`).
+- Branch names **must** include the issue number (e.g., `42-fix-schedule-conflict`).
 - Direct pushes to `main` are not allowed — all changes go through pull requests.
+
+### Git workflow (REQUIRED)
+
+Branch policies are enforced on `main`. **Never commit directly to main.** Follow this workflow:
+
+```bash
+# 1. Create or find a GitHub Issue
+gh issue create --title "Description of work"   # if none exists
+
+# 2. Create a feature branch (include issue number)
+git checkout main && git pull
+git checkout -b <issue-number>-<short-description>
+
+# 3. Make changes, validate locally (see CI gate compliance above)
+
+# 4. Commit with issue reference
+git add -A
+git commit -m "Description of change
+
+Closes #<issue-number>
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+
+# 5. Push and create PR
+git push -u origin <branch-name>
+gh pr create --base main --title "Title" --body "Closes #<issue-number>"
+```

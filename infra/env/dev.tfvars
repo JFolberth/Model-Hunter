@@ -7,6 +7,10 @@ runbook_name            = "Model-Hunter"
 schedule_frequency      = "Month"
 schedule_interval       = 1
 
+target_subscription_ids = [
+  "35ce8cef-94f9-4dba-9c61-a09396fec7cf"
+]
+
 tags = {
   Environment = "Development"
   Project     = "Model-Hunter"

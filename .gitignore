@@ -44,3 +44,4 @@ output/
 
 # Allow environment-specific tfvars in the env folder
 !infra/env/*.tfvars
+tflint.exe
