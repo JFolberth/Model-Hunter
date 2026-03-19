@@ -1,13 +1,3 @@
-terraform {
-  required_version = ">= 1.6"
-  required_providers {
-    azapi = {
-      source  = "Azure/azapi"
-      version = "~> 2.0"
-    }
-  }
-}
-
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts
 resource "azapi_resource" "automation_account" {
   type      = "Microsoft.Automation/automationAccounts@2024-10-23"
