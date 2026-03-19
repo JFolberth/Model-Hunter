@@ -164,14 +164,14 @@ function Get-GatewayUrl {
     .SYNOPSIS
         Determines if a CognitiveServices endpoint is behind an API gateway.
     .DESCRIPTION
-        Compares the account endpoint against standard Azure patterns:
-          https://<resource-name>.openai.azure.com
-          https://<resource-name>.cognitiveservices.azure.com
-        If the endpoint does not match, it is behind a gateway and the URL is returned.
+        Checks if the endpoint matches standard Azure domain suffixes:
+          *.openai.azure.com
+          *.cognitiveservices.azure.com
+          *.services.ai.azure.com
+        If the endpoint does not match any standard suffix, it is behind a gateway
+        (e.g., APIM or third-party proxy) and the URL is returned.
     .PARAMETER EndpointUrl
-        The properties.endpoint value from the CognitiveServices account.
-    .PARAMETER ResourceName
-        The CognitiveServices account name (used to match against standard patterns).
+        The properties.endpoint value from the CognitiveServices account or project.
     .OUTPUTS
         String — the gateway URL if non-standard, or empty string if standard/null.
     #>
@@ -179,29 +179,34 @@ function Get-GatewayUrl {
     param(
         [AllowNull()]
         [AllowEmptyString()]
-        [string]$EndpointUrl,
-
-        [Parameter(Mandatory)]
-        [string]$ResourceName
+        [string]$EndpointUrl
     )
 
     if ([string]::IsNullOrWhiteSpace($EndpointUrl)) {
         return ''
     }
 
-    # Normalize: remove trailing slash for comparison
-    $normalized = $EndpointUrl.TrimEnd('/')
-
-    # Standard Azure endpoint patterns
+    # Standard Azure endpoint domain suffixes
     # https://learn.microsoft.com/azure/ai-services/openai/reference
-    $standardPatterns = @(
-        "https://$($ResourceName).openai.azure.com",
-        "https://$($ResourceName).cognitiveservices.azure.com",
-        "https://$($ResourceName).services.ai.azure.com"
+    # https://learn.microsoft.com/azure/ai-services/endpoints
+    $standardSuffixes = @(
+        '.openai.azure.com',
+        '.cognitiveservices.azure.com',
+        '.services.ai.azure.com'
     )
 
-    foreach ($pattern in $standardPatterns) {
-        if ($normalized -ieq $pattern) {
+    # Extract the host from the URL
+    try {
+        $uri = [System.Uri]$EndpointUrl
+        $host_ = $uri.Host.ToLower()
+    }
+    catch {
+        # If URL can't be parsed, treat as gateway
+        return $EndpointUrl
+    }
+
+    foreach ($suffix in $standardSuffixes) {
+        if ($host_.EndsWith($suffix.ToLower())) {
             return ''
         }
     }
@@ -448,7 +453,7 @@ resources
         } elseif ($accountEndpointMap.ContainsKey($acctIdLower)) {
             $accountEndpointMap[$acctIdLower]
         } else { $null }
-        $gatewayUrl = Get-GatewayUrl -EndpointUrl $endpointUrl -ResourceName $dep.AccountName
+        $gatewayUrl = Get-GatewayUrl -EndpointUrl $endpointUrl
 
         $deployments.Add([PSCustomObject]@{
             SubscriptionId    = $dep.SubscriptionId
