@@ -857,6 +857,7 @@ function Build-Report {
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Deployments No Cost</div><div class=`"value red`">$deploymentsNoCost</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Unique Models</div><div class=`"value blue`">$($uniqueModels.Count)</div><div class=`"detail`">$($modelsWithCost.Count) with cost</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">AI Accounts</div><div class=`"value`">$($uniqueAccounts.Count)</div></div>")
+    [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Behind Gateway</div><div class=`"value$(if ($gatewayCount -gt 0) { ' blue' })`">$gatewayCount</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Retiring in 90 Days</div><div class=`"value$(if ($retiringSoonCount -gt 0) { ' red' })`">$retiringSoonCount</div><div class=`"detail`">$retiringCount total with retirement date</div></div>")
     [void]$htmlBuilder.AppendLine("    <div class=`"card`"><div class=`"label`">Total Cost ($Currency)</div><div class=`"value green`">$('{0:N2}' -f $totalCostSum)</div><div class=`"detail`">across $($BillingPeriodNames.Count) period(s)</div></div>")
     [void]$htmlBuilder.AppendLine('  </div>')
@@ -871,7 +872,7 @@ function Build-Report {
     $headerColumns = @(
         'SubscriptionName', 'ResourceGroup', 'ResourceType', 'ResourceName',
         'ProjectName', 'DeploymentName', 'ModelName', 'ModelVersion',
-        'LifecycleStatus', 'RetirementDate', 'SKU', 'Capacity', 'IsInUse'
+        'LifecycleStatus', 'RetirementDate', 'SKU', 'Capacity', 'GatewayUrl', 'IsInUse'
     )
     foreach ($periodName in $BillingPeriodNames) {
         $headerColumns += "Cost_$periodName"
