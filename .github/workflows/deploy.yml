@@ -19,6 +19,7 @@ jobs:
   deploy-dev:
     name: Deploy Dev
     needs: build
+    if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/_deploy.yml
     with:
       environment: dev
@@ -29,6 +30,7 @@ jobs:
   deploy-prod:
     name: Deploy Prod
     needs: deploy-dev
+    if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/_deploy.yml
     with:
       environment: prod
