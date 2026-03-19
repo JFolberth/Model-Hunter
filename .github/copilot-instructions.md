@@ -319,7 +319,7 @@ Closes #<issue-number>
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 
-# 5. Push and create PR
+# 5. Push and create PR (title must be: issue number + description of changes)
 git push -u origin <branch-name>
-gh pr create --base main --title "Title" --body "Closes #<issue-number>"
+gh pr create --base main --title "#<issue-number> - Description of changes" --body "Closes #<issue-number>"
 ```
