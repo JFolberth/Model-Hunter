@@ -964,6 +964,7 @@ function Build-Report {
     $summaryRows = [System.Collections.Generic.List[PSCustomObject]]::new()
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Report Generated'; Value = $timestamp })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Subscriptions Scanned'; Value = $uniqueSubs.Count })
+    $summaryRows.Add([PSCustomObject]@{ Metric = 'Deployments Behind Gateway'; Value = $gatewayCount })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'AI Accounts Found'; Value = $uniqueAccounts.Count })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Total Deployments'; Value = $totalDeployments })
     $summaryRows.Add([PSCustomObject]@{ Metric = 'Deployments With Cost'; Value = $deploymentsWithCost })

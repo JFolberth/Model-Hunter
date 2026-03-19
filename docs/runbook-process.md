@@ -28,9 +28,9 @@ The Resource Graph query targets `microsoft.cognitiveservices/accounts` and join
 
 Subscription names are cached via `Get-AzSubscription` to avoid repeated lookups.
 
-### Gateway Detection
+#### Gateway Detection
 
-The `Get-GatewayUrl` function determines if a model is behind an API gateway by comparing the account's `properties.endpoint` against standard Azure patterns (`<name>.openai.azure.com`, `<name>.cognitiveservices.azure.com`, `<name>.services.ai.azure.com`). If the endpoint does not match any standard pattern, the URL is returned as the `GatewayUrl` field — indicating the model is accessed through APIM or a third-party gateway. If the endpoint is standard or unavailable, `GatewayUrl` is blank.
+The `Get-GatewayUrl` function determines if a model is behind an API gateway by first preferring any project-level endpoint, and if none exists, falling back to the account's `properties.endpoint`. The selected endpoint is compared against standard Azure patterns (`<name>.openai.azure.com`, `<name>.cognitiveservices.azure.com`, `<name>.services.ai.azure.com`). If the endpoint does not match any standard pattern, the URL is returned as the `GatewayUrl` field — indicating the model is accessed through APIM or a third-party gateway. If the endpoint is standard or unavailable, `GatewayUrl` is blank.
 
 ### 3. Resource ID Parsing and Classification
 

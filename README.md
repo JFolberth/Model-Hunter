@@ -8,7 +8,7 @@ Model Hunter discovers all deployed Azure AI Foundry and OpenAI models across Az
 - **CognitiveServices account detection** — identifies all AIServices and OpenAI accounts via Azure Resource Graph
 - **Deployment inventory** — lists every model deployment with name, version, SKU, capacity, and deployment type
 - **Resource classification** — distinguishes Foundry vs OpenAI Service accounts, maps Foundry projects
-- **Gateway detection** — identifies models behind API gateways (APIM or third-party) by comparing the account endpoint against standard Azure patterns; shows the gateway URL in the report
+- **Gateway detection** — identifies models behind API gateways (APIM or third-party) by comparing the project endpoint when available (falling back to the account endpoint) against standard Azure patterns; surfaces the detected gateway endpoint as `GatewayUrl` in the report
 - **Model retirement tracking** — queries the Azure Models API for lifecycle status and retirement dates per model version
 - **Cost analysis** — queries Azure Cost Management for the last 3 billing periods (or calendar months as fallback), correlates costs to specific accounts
 - **Usage determination** — flags each deployment as "In Use" or "Unused" based on whether it has any associated cost
