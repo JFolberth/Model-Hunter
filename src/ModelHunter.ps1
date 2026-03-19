@@ -311,9 +311,35 @@ resources
             $accountProjectMap[$parentAccountId] += $projectName
             # Store project endpoint keyed by project ID
             $projectEndpointMap[$proj.id.ToLower()] = $proj.endpoint
+            Write-Verbose "  Project '$projectName' endpoint: $($proj.endpoint)"
         }
     }
     Write-Host "Found $($projectResults.Count) project(s) across $($accountProjectMap.Count) account(s)."
+
+    # If Resource Graph didn't return endpoints for projects, fetch via ARM API
+    $projectsMissingEndpoint = @($projectEndpointMap.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) })
+    if ($projectsMissingEndpoint.Count -gt 0 -and $projectResults.Count -gt 0) {
+        Write-Host "Fetching project endpoints via ARM API ($($projectsMissingEndpoint.Count) missing from Resource Graph)..."
+        foreach ($proj in $projectResults) {
+            $projIdLower = $proj.id.ToLower()
+            if ([string]::IsNullOrWhiteSpace($projectEndpointMap[$projIdLower])) {
+                try {
+                    # https://learn.microsoft.com/rest/api/aiservices/accountmanagement/accounts/get
+                    $projResp = Invoke-AzRestMethod -Uri "https://management.azure.com$($proj.id)?api-version=2024-10-01" -Method GET -ErrorAction Stop
+                    if ($projResp.StatusCode -eq 200) {
+                        $projData = $projResp.Content | ConvertFrom-Json
+                        if ($projData.properties.endpoint) {
+                            $projectEndpointMap[$projIdLower] = $projData.properties.endpoint
+                            Write-Host "  Retrieved endpoint for '$($proj.name)': $($projData.properties.endpoint)"
+                        }
+                    }
+                }
+                catch {
+                    Write-Warning "  Could not fetch endpoint for project '$($proj.name)': $_"
+                }
+            }
+        }
+    }
 
     # Query 2: For each account, list deployments via ARM API
     # Resource Graph may miss some deployment types (Global Standard, Data Zone, etc.)
@@ -447,12 +473,27 @@ resources
         $subscriptionName = $subscriptionNameCache[$dep.SubscriptionId]
         if (-not $subscriptionName) { $subscriptionName = $dep.SubscriptionId }
 
-        # Gateway detection: prefer project endpoint (where APIM gateway lives) over account endpoint
-        $endpointUrl = if ($dep.ProjectEndpoint) {
-            $dep.ProjectEndpoint
-        } elseif ($accountEndpointMap.ContainsKey($acctIdLower)) {
-            $accountEndpointMap[$acctIdLower]
-        } else { $null }
+        # Gateway detection: prefer project endpoint (where APIM gateway lives) over account endpoint.
+        # Deployments listed at the account level may not have /projects/ in their ID,
+        # so also check project endpoints for this account.
+        $endpointUrl = $null
+        if ($dep.ProjectEndpoint) {
+            $endpointUrl = $dep.ProjectEndpoint
+        } else {
+            # Check all project endpoints for this account
+            $acctProjectEndpoints = @($projectEndpointMap.GetEnumerator() | Where-Object { $_.Key -like "$acctIdLower/projects/*" } | ForEach-Object { $_.Value } | Where-Object { $_ })
+            foreach ($pe in $acctProjectEndpoints) {
+                $gw = Get-GatewayUrl -EndpointUrl $pe
+                if ($gw) {
+                    # Found a non-standard project endpoint — use it
+                    $endpointUrl = $pe
+                    break
+                }
+            }
+            if (-not $endpointUrl -and $accountEndpointMap.ContainsKey($acctIdLower)) {
+                $endpointUrl = $accountEndpointMap[$acctIdLower]
+            }
+        }
         $gatewayUrl = Get-GatewayUrl -EndpointUrl $endpointUrl
 
         $deployments.Add([PSCustomObject]@{
