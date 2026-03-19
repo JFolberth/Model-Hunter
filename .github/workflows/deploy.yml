@@ -23,6 +23,7 @@ jobs:
       id-token: write
       contents: read
     uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
     with:
       environment: dev
       tf_var_file: env/dev.tfvars
@@ -37,6 +38,7 @@ jobs:
       id-token: write
       contents: read
     uses: ./.github/workflows/_deploy.yml
+    secrets: inherit
     with:
       environment: prod
       tf_var_file: env/prod.tfvars
