@@ -30,26 +30,11 @@ resource "azapi_resource" "runtime_environment" {
   }
 }
 
-# Az 12.3.0 (defaultPackages above) bundles Az.Accounts and Az.Storage automatically.
-# However, Az.ResourceGraph and Az.CostManagement are NOT unpacked by defaultPackages
-# and must be installed as separate packages. Do NOT add Az.Storage separately — that
-# causes version conflicts ("module could not be loaded").
+# Az 12.3.0 (defaultPackages above) bundles Az.Accounts, Az.Storage, and Az.ResourceGraph.
+# Do NOT add those as separate packages — it causes version conflicts ("module could not
+# be loaded"). Az.CostManagement is NOT bundled and must be installed separately.
 
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/runtimeenvironments/packages
-resource "azapi_resource" "package_az_resourcegraph" {
-  type      = "Microsoft.Automation/automationAccounts/runtimeEnvironments/packages@2024-10-23"
-  name      = "Az.ResourceGraph"
-  parent_id = azapi_resource.runtime_environment.id
-
-  body = {
-    properties = {
-      contentLink = {
-        uri = "https://www.powershellgallery.com/api/v2/package/Az.ResourceGraph"
-      }
-    }
-  }
-}
-
 resource "azapi_resource" "package_az_costmanagement" {
   type      = "Microsoft.Automation/automationAccounts/runtimeEnvironments/packages@2024-10-23"
   name      = "Az.CostManagement"
@@ -85,7 +70,6 @@ resource "azapi_resource" "runbook" {
 
   depends_on = [
     azapi_resource.runtime_environment,
-    azapi_resource.package_az_resourcegraph,
     azapi_resource.package_az_costmanagement
   ]
 }
