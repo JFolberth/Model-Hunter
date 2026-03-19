@@ -47,7 +47,7 @@ resource "azapi_resource" "role_assignment" {
   type = "Microsoft.Authorization/roleAssignments@2022-04-01"
 
   # Deterministic GUID derived from principal + scope + role so re-applies are idempotent
-  name      = format("%s-%s-%s-%s-%s",
+  name = format("%s-%s-%s-%s-%s",
     substr(md5("${var.principal_id}-${each.value.scope}-${each.value.role_definition_id}"), 0, 8),
     substr(md5("${var.principal_id}-${each.value.scope}-${each.value.role_definition_id}"), 8, 4),
     substr(md5("${var.principal_id}-${each.value.scope}-${each.value.role_definition_id}"), 12, 4),

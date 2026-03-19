@@ -179,11 +179,19 @@ When `-StorageAccountResourceId` is omitted, reports are saved locally to `./out
 - **PowerShell 7.4 compatibility** — all scripts must run in the Azure Automation PowerShell 7.2+ runtime. Do not use features from 7.5+.
 - **`src/ModelHunter.ps1` is a single Runbook script** with functions defined inline using `#region` blocks. One file = one Runbook deployment.
 - **Function structure**: Each function within `ModelHunter.ps1` is self-contained. The `#region Main Execution` block at the bottom calls them in sequence.
-- **Parameters**: Use `[CmdletBinding()]` and typed parameters with `[Parameter(Mandatory)]` where appropriate. Validate with `[ValidateNotNullOrEmpty()]`.
+- **Parameters**: Use `[CmdletBinding()]` and typed parameters with `[Parameter(Mandatory)]` where appropriate. Validate with `[ValidateNotNullOrEmpty()]`. Use `[string]` (not `[string[]]`) for array params — `[string[]]` crashes Azure Automation PS 7.4 runtime.
 - **Error handling**: Use `try/catch` blocks. On fatal errors, use `throw` to propagate. On non-fatal errors (e.g., one subscription fails), log with `Write-Warning` and continue.
 - **Logging**: Use `Write-Host` inside functions (avoids polluting return values — in PS 7+ Write-Host writes to Information stream, captured in Automation logs). Use `Write-Output` only in the main execution block. Use `Write-Warning` for non-fatal errors.
 - **No hardcoded values**: All configuration (subscription IDs, storage account, container name) comes from parameters.
 - **Authentication pattern**: The `#region Authentication` block handles `Connect-AzAccount -Identity` once. Functions assume they're already authenticated.
+
+### Azure Automation Runtime Environment (CRITICAL)
+
+- The runtime environment (`PowerShell-74`) uses `defaultPackages = { Az = "12.3.0" }` which bundles **all** Az sub-modules (Az.Accounts, Az.Storage, Az.ResourceGraph, Az.CostManagement, etc.).
+- **Do NOT add separate package resources** for Az sub-modules already included in the Az meta-module — this causes version conflicts and "module could not be loaded" errors.
+- Only add separate package resources for modules **not** included in the Az meta-module.
+- The `runbookType` must be `"PowerShell"` (not `"PowerShell72"`) when using runtime environments.
+- `#requires -Modules` is forbidden — it causes silent crashes (zero streams) in Azure Automation.
 
 ### Reference linking (REQUIRED)
 

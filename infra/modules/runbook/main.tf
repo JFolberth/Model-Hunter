@@ -3,6 +3,9 @@ terraform {
     azapi = {
       source = "Azure/azapi"
     }
+    random = {
+      source = "hashicorp/random"
+    }
   }
 }
 
@@ -27,51 +30,9 @@ resource "azapi_resource" "runtime_environment" {
   }
 }
 
-# https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/runtimeenvironments/packages
-resource "azapi_resource" "package_az_resourcegraph" {
-  type      = "Microsoft.Automation/automationAccounts/runtimeEnvironments/packages@2024-10-23"
-  name      = "Az.ResourceGraph"
-  parent_id = azapi_resource.runtime_environment.id
-
-  body = {
-    properties = {
-      contentLink = {
-        uri     = "https://www.powershellgallery.com/api/v2/package/Az.ResourceGraph"
-        version = "1.0.0"
-      }
-    }
-  }
-}
-
-resource "azapi_resource" "package_az_costmanagement" {
-  type      = "Microsoft.Automation/automationAccounts/runtimeEnvironments/packages@2024-10-23"
-  name      = "Az.CostManagement"
-  parent_id = azapi_resource.runtime_environment.id
-
-  body = {
-    properties = {
-      contentLink = {
-        uri     = "https://www.powershellgallery.com/api/v2/package/Az.CostManagement"
-        version = "1.0.0"
-      }
-    }
-  }
-}
-
-resource "azapi_resource" "package_az_storage" {
-  type      = "Microsoft.Automation/automationAccounts/runtimeEnvironments/packages@2024-10-23"
-  name      = "Az.Storage"
-  parent_id = azapi_resource.runtime_environment.id
-
-  body = {
-    properties = {
-      contentLink = {
-        uri     = "https://www.powershellgallery.com/api/v2/package/Az.Storage"
-        version = "7.0.0"
-      }
-    }
-  }
-}
+# Az 12.3.0 (defaultPackages above) includes Az.Accounts, Az.Storage, Az.ResourceGraph,
+# Az.CostManagement, and all other Az sub-modules. No separate package installs needed —
+# adding them individually causes version conflicts ("module could not be loaded").
 
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/runbooks
 resource "azapi_resource" "runbook" {
@@ -92,11 +53,7 @@ resource "azapi_resource" "runbook" {
     }
   }
 
-  depends_on = [
-    azapi_resource.package_az_resourcegraph,
-    azapi_resource.package_az_costmanagement,
-    azapi_resource.package_az_storage
-  ]
+  depends_on = [azapi_resource.runtime_environment]
 }
 
 # Upload the PowerShell script content to the runbook draft and publish it.
@@ -123,33 +80,55 @@ resource "terraform_data" "runbook_content" {
   depends_on = [azapi_resource.runbook]
 }
 
+# Compute a future start time at 02:00 UTC appropriate for the schedule frequency.
+# plantimestamp() is evaluated at plan time and is stable within a single plan/apply cycle.
+locals {
+  plan_year  = tonumber(formatdate("YYYY", plantimestamp()))
+  plan_month = tonumber(formatdate("M", plantimestamp()))
+  next_month = local.plan_month == 12 ? 1 : local.plan_month + 1
+  next_year  = local.plan_month == 12 ? local.plan_year + 1 : local.plan_year
+  today_base = "${formatdate("YYYY-MM-DD", plantimestamp())}T02:00:00Z"
+
+  schedule_start_time = (
+    var.schedule_frequency == "Day" ? timeadd(local.today_base, "24h") :
+    var.schedule_frequency == "Week" ? timeadd(local.today_base, "168h") :
+    format("%04d-%02d-01T02:00:00Z", local.next_year, local.next_month)
+  )
+}
+
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/schedules
 resource "azapi_resource" "schedule" {
   type      = "Microsoft.Automation/automationAccounts/schedules@2024-10-23"
-  name      = "${var.name}-default3-schedule"
+  name      = "${var.name}-schedule"
   parent_id = var.automation_account_id
 
   body = {
     properties = {
       description = "Schedule for Model Hunter runbook"
-      startTime   = var.schedule_start_time
+      startTime   = local.schedule_start_time
       frequency   = var.schedule_frequency
       interval    = var.schedule_interval
       timeZone    = "UTC"
     }
   }
+
+  lifecycle {
+    ignore_changes = [body.properties.startTime]
+  }
+}
+
+# Stable UUID for the job schedule — regenerates only when the runbook or schedule changes.
+resource "random_uuid" "job_schedule_id" {
+  keepers = {
+    runbook_name  = azapi_resource.runbook.name
+    schedule_name = azapi_resource.schedule.name
+  }
 }
 
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/jobschedules
 resource "azapi_resource" "job_schedule" {
-  type = "Microsoft.Automation/automationAccounts/jobSchedules@2024-10-23"
-  name = format("%s-%s-%s-%s-%s",
-    substr(md5("${azapi_resource.runbook.name}-${azapi_resource.schedule.name}"), 0, 8),
-    substr(md5("${azapi_resource.runbook.name}-${azapi_resource.schedule.name}"), 8, 4),
-    substr(md5("${azapi_resource.runbook.name}-${azapi_resource.schedule.name}"), 12, 4),
-    substr(md5("${azapi_resource.runbook.name}-${azapi_resource.schedule.name}"), 16, 4),
-    substr(md5("${azapi_resource.runbook.name}-${azapi_resource.schedule.name}"), 20, 12)
-  )
+  type      = "Microsoft.Automation/automationAccounts/jobSchedules@2024-10-23"
+  name      = random_uuid.job_schedule_id.result
   parent_id = var.automation_account_id
 
   body = {

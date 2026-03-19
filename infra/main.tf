@@ -35,7 +35,6 @@ module "runbook" {
   script_path                 = "${path.module}/../src/ModelHunter.ps1"
   schedule_frequency          = var.schedule_frequency
   schedule_interval           = var.schedule_interval
-  schedule_start_time         = var.schedule_start_time
   target_subscription_ids     = var.target_subscription_ids
   storage_account_resource_id = module.storage_account.id
   container_name              = var.container_name

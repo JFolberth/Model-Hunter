@@ -41,11 +41,6 @@ variable "schedule_interval" {
   default     = 1
 }
 
-variable "schedule_start_time" {
-  description = "ISO 8601 datetime for the first schedule run (e.g., 2026-04-01T02:00:00Z)."
-  type        = string
-}
-
 variable "target_subscription_ids" {
   description = "Subscription IDs passed to the Runbook as a parameter."
   type        = list(string)

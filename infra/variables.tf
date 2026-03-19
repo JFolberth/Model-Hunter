@@ -58,8 +58,3 @@ variable "schedule_interval" {
   type        = number
   default     = 1
 }
-
-variable "schedule_start_time" {
-  description = "ISO 8601 datetime for the first scheduled run (e.g., 2026-04-01T02:00:00Z)."
-  type        = string
-}

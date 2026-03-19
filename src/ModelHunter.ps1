@@ -55,12 +55,24 @@ $OutputPath = "./output"
 #endregion Parameters
 
 #region Module Check
-# Verify required modules are available (gives clear error instead of silent failure)
-$requiredModules = @('Az.Accounts', 'Az.ResourceGraph', 'Az.CostManagement', 'Az.Storage')
+# Verify required modules are available (gives clear error instead of silent failure).
+# In Azure Automation runtime environments, sub-modules bundled inside the Az meta-module
+# may not appear via Get-Module -ListAvailable, so we fall back to Get-Command probing.
+$requiredCommands = @{
+    'Az.Accounts'       = 'Get-AzContext'
+    'Az.ResourceGraph'  = 'Search-AzGraph'
+    'Az.CostManagement' = 'Invoke-AzCostManagementQuery'
+    'Az.Storage'        = 'New-AzStorageContext'
+}
 $missingModules = @()
-foreach ($mod in $requiredModules) {
+foreach ($entry in $requiredCommands.GetEnumerator()) {
+    $mod = $entry.Key
+    $cmd = $entry.Value
     if (-not (Get-Module -ListAvailable -Name $mod -ErrorAction SilentlyContinue)) {
-        $missingModules += $mod
+        # Module not listed — try loading by command (works for bundled sub-modules)
+        if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+            $missingModules += $mod
+        }
     }
 }
 if ($missingModules.Count -gt 0) {
