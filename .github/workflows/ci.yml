@@ -54,7 +54,7 @@ jobs:
         working-directory: infra
         run: |
           terraform plan \
-            -var-file="environments/dev.tfvars" \
+            -var-file="env/dev.tfvars" \
             -var="target_subscription_ids=${{ vars.TARGET_SUBSCRIPTION_IDS }}"
 
   # ── CodeQL (PowerShell) ──

@@ -42,5 +42,5 @@ output/
 # Allow tfvars sample to be checked in
 !terraform.tfvars.sample
 
-# Allow environment-specific tfvars (non-sensitive values only)
-!infra/environments/*.tfvars
+# Allow environment-specific tfvars in the env folder
+!infra/env/*.tfvars

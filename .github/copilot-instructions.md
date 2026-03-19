@@ -251,3 +251,32 @@ Connect-AzAccount
   -ContainerName "model-discovery-reports"
 ```
 Do not update the Runbook source in Azure until the script has been executed successfully in a local PowerShell 7.4+ session. The Runbook is a deployment target, not a test environment.
+
+### CI gate compliance (REQUIRED)
+
+Every change **must** pass the CI workflow before being committed. Before committing, run the full CI check suite locally:
+
+```bash
+# 1. Pester tests
+pwsh -Command "Import-Module Pester -MinimumVersion 5.0; Invoke-Pester ./tests -Output Detailed"
+
+# 2. Terraform formatting
+cd infra/ && terraform fmt -recursive -check
+
+# 3. Terraform validation
+terraform init -backend=false && terraform validate
+
+# 4. TFLint
+tflint --init && tflint --recursive
+```
+
+Do NOT commit code that would fail any of these checks. The CI workflow (`.github/workflows/ci.yml`) runs these in parallel on every PR — a failure blocks the merge.
+
+### Work item tracking (REQUIRED)
+
+Every effort — bug fix, feature, refactor, docs update — **must** have an associated GitHub Issue (work item). This is enforced by branch protection rules on `main`.
+
+- Before starting work, check if a relevant issue exists. If not, **create one** with a clear title and description.
+- Reference the issue in the PR (e.g., `Closes #42` or `Fixes #42` in the PR body).
+- Branch names should include the issue number (e.g., `42-fix-schedule-conflict`).
+- Direct pushes to `main` are not allowed — all changes go through pull requests.

@@ -21,7 +21,7 @@ jobs:
     uses: ./.github/workflows/_deploy.yml
     with:
       environment: dev
-      tf_var_file: environments/dev.tfvars
+      tf_var_file: env/dev.tfvars
       tf_state_key: model-hunter-dev.tfstate
 
   # ── Deploy to Prod (manual approval via GitHub Environment) ──
@@ -31,5 +31,5 @@ jobs:
     uses: ./.github/workflows/_deploy.yml
     with:
       environment: prod
-      tf_var_file: environments/prod.tfvars
+      tf_var_file: env/prod.tfvars
       tf_state_key: model-hunter-prod.tfstate
