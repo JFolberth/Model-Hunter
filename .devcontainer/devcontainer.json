@@ -12,9 +12,10 @@
     "ghcr.io/devcontainers/features/node:1": {
       "version": "lts"
     },
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers-extra/features/tflint:1": {}
   },
-  "postCreateCommand": "pwsh -Command \"Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; Install-Module -Name Az.Accounts, Az.ResourceGraph, Az.CostManagement, Az.Storage, Az.Billing, Pester -Force -Scope CurrentUser -AcceptLicense\"",
+  "postCreateCommand": "pwsh -Command \"Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; Install-Module -Name Az.Accounts, Az.ResourceGraph, Az.CostManagement, Az.Storage, Az.Billing, Pester -Force -Scope CurrentUser -AcceptLicense\" && curl -s https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -25,7 +26,11 @@
         "github.copilot",
         "github.copilot-chat",
         "mechatroner.rainbow-csv",
-        "daiyy.quick-html-previewer"
+        "daiyy.quick-html-previewer",
+        "github.vscode-github-actions",
+        "redhat.vscode-yaml",
+        "GitHub.vscode-codeql",
+        "aquasecurityofficial.trivy-vulnerability-scanner"
       ],
       "settings": {
         "terraform.languageServer.enable": true,
