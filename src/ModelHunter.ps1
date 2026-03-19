@@ -277,12 +277,12 @@ resources
     $aiAccountResults = @($accountResults | Where-Object { $_.kind -in @('AIServices', 'OpenAI') })
     Write-Host "Found $($accountResults.Count) CognitiveServices account(s), $($aiAccountResults.Count) AI-capable (AIServices/OpenAI)."
 
-    # Query projects to map account → project names
+    # Query projects to map account → project names and project endpoints
     # https://learn.microsoft.com/azure/templates/microsoft.cognitiveservices/accounts/projects
     $projectQuery = @"
 resources
 | where type =~ 'microsoft.cognitiveservices/accounts/projects'
-| project id, name, subscriptionId
+| project id, name, subscriptionId, endpoint = properties.endpoint
 "@
     try {
         $projectResults = Search-AzGraph -Query $projectQuery -Subscription $SubscriptionIds -ErrorAction Stop
@@ -293,7 +293,9 @@ resources
     }
 
     # Build lookup: account ID (lowercase) → array of project names
+    # Build lookup: project ID (lowercase) → endpoint
     $accountProjectMap = @{}
+    $projectEndpointMap = @{}
     foreach ($proj in $projectResults) {
         if ($proj.id -match '(?i)(.*?/accounts/[^/]+)/projects/([^/]+)') {
             $parentAccountId = $Matches[1].ToLower()
@@ -302,6 +304,8 @@ resources
                 $accountProjectMap[$parentAccountId] = @()
             }
             $accountProjectMap[$parentAccountId] += $projectName
+            # Store project endpoint keyed by project ID
+            $projectEndpointMap[$proj.id.ToLower()] = $proj.endpoint
         }
     }
     Write-Host "Found $($projectResults.Count) project(s) across $($accountProjectMap.Count) account(s)."
@@ -366,10 +370,15 @@ resources
                             $sName = $d.sku.name
                             $sCap  = $d.sku.capacity
                         }
-                        # Check for project in deployment ID
+                        # Check for project in deployment ID and resolve project endpoint
                         $projName = $null
-                        if ($d.id -match '(?i)/projects/([^/]+)') {
-                            $projName = $Matches[1]
+                        $projEndpoint = $null
+                        if ($d.id -match '(?i)(.*?/accounts/[^/]+/projects/([^/]+))') {
+                            $projName = $Matches[2]
+                            $projId = $Matches[1].ToLower()
+                            if ($projectEndpointMap.ContainsKey($projId)) {
+                                $projEndpoint = $projectEndpointMap[$projId]
+                            }
                         }
 
                         # Look up lifecycle info for this model+version
@@ -386,6 +395,7 @@ resources
                             SKU               = $sName
                             Capacity          = $sCap
                             ProjectName       = $projName
+                            ProjectEndpoint   = $projEndpoint
                             AccountName       = $acctName
                             AccountKind       = $acctKind
                             AccountResourceId = $accountId.ToLower()
@@ -432,8 +442,12 @@ resources
         $subscriptionName = $subscriptionNameCache[$dep.SubscriptionId]
         if (-not $subscriptionName) { $subscriptionName = $dep.SubscriptionId }
 
-        # Gateway detection: check if endpoint is non-standard (behind APIM or third-party)
-        $endpointUrl = if ($accountEndpointMap.ContainsKey($acctIdLower)) { $accountEndpointMap[$acctIdLower] } else { $null }
+        # Gateway detection: prefer project endpoint (where APIM gateway lives) over account endpoint
+        $endpointUrl = if ($dep.ProjectEndpoint) {
+            $dep.ProjectEndpoint
+        } elseif ($accountEndpointMap.ContainsKey($acctIdLower)) {
+            $accountEndpointMap[$acctIdLower]
+        } else { $null }
         $gatewayUrl = Get-GatewayUrl -EndpointUrl $endpointUrl -ResourceName $dep.AccountName
 
         $deployments.Add([PSCustomObject]@{
