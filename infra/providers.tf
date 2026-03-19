@@ -17,6 +17,8 @@ terraform {
     #   storage_account_name = "saterraformstatedeveus"
     #   container_name       = "tfstate"
     #   key                  = "model-hunter-{env}.tfstate"
+    use_oidc         = true
+    use_azuread_auth = true
   }
 }
 
