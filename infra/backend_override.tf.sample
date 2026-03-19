@@ -1,0 +1,15 @@
+# Copy this file to backend_override.tf for local development.
+# Terraform automatically loads *_override.tf files, which overrides the
+# azurerm backend in providers.tf with local state storage.
+#
+# Usage:
+#   cp backend_override.tf.sample backend_override.tf
+#   terraform init -reconfigure
+#
+# The override file is gitignored (*_override.tf) so it won't be committed.
+
+terraform {
+  backend "local" {
+    path = "terraform.tfstate"
+  }
+}

@@ -125,6 +125,13 @@ Instead of rolling date ranges, we use Azure billing periods to align with how f
 ### Terraform
 ```bash
 cd infra/
+
+# Local development — use local state (one-time setup):
+cp backend_override.tf.sample backend_override.tf
+terraform init -reconfigure
+
+# CI/CD uses the azurerm backend (providers.tf) — no override needed.
+
 terraform init                                    # Initialize providers + modules
 terraform validate                                # Lint / syntax check
 terraform fmt -recursive                          # Format all .tf files
