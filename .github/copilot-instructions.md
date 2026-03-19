@@ -98,7 +98,9 @@ Azure Cognitive Services deployment resource IDs follow these patterns:
 | ModelVersion | `properties.model.version` | From Resource Graph |
 | SKU | `sku.name` | e.g., "Standard", "GlobalStandard", "ProvisionedManaged" |
 | Capacity | `sku.capacity` | Provisioned TPM/units |
-| GatewayUrl | `properties.endpoint` | Non-standard endpoint URL if behind a gateway (APIM/third-party); blank if direct |
+| GatewayUrl | APIM `properties.gatewayUrl` | APIM gateway URL if account is configured in APIM; blank otherwise |
+| AIGateway | APIM `service/apis` match | "Yes" if account has a matching API in APIM (fully integrated AI Gateway); "No" otherwise |
+| APIMConfigured | APIM `service/backends` match | "Yes" if account has a matching backend in APIM (defined in APIM); "No" otherwise |
 
 ## Cost Analysis
 
