@@ -55,8 +55,7 @@ jobs:
         working-directory: infra
         run: |
           terraform plan \
-            -var-file="env/dev.tfvars" \
-            -var="target_subscription_ids=${{ secrets.TARGET_SUBSCRIPTION_IDS }}"
+            -var-file="env/dev.tfvars"
 
   # ── PowerShell Security Scan (PSScriptAnalyzer) ──
   psscriptanalyzer:

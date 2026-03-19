@@ -261,7 +261,7 @@ Do not update the Runbook source in Azure until the script has been executed suc
 
 ### CI gate compliance (REQUIRED)
 
-Every change **must** pass the CI workflow before being committed. Before committing, run the full CI check suite locally:
+Every change **must** pass the CI workflow before being committed. Before committing, run the full CI check suite locally. **This is mandatory — do not skip any step.**
 
 ```bash
 # 1. Pester tests
@@ -273,9 +273,16 @@ cd infra/ && terraform fmt -recursive -check
 # 3. Terraform validation
 terraform init -backend=false && terraform validate
 
-# 4. TFLint
+# 4. TFLint (MUST pass with zero warnings before committing any .tf changes)
 tflint --init && tflint --recursive
 ```
+
+**TFLint is not optional.** Every Terraform module must have:
+- `required_version = ">= 1.6"` in the `terraform {}` block
+- Version constraints on all providers (e.g., `version = "~> 2.0"` for azapi)
+- `source` specified for all providers (e.g., `source = "Azure/azapi"`)
+
+Run `tflint --recursive` from the `infra/` directory after every `.tf` change. A tflint failure will block the CI pipeline.
 
 Do NOT commit code that would fail any of these checks. The CI workflow (`.github/workflows/ci.yml`) runs these in parallel on every PR — a failure blocks the merge.
 

@@ -69,7 +69,6 @@ jobs:
         run: |
           terraform plan \
             -var-file="${{ inputs.tf_var_file }}" \
-            -var="target_subscription_ids=${{ secrets.TARGET_SUBSCRIPTION_IDS }}" \
             -out=tfplan
 
       - name: Terraform Apply
