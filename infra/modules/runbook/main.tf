@@ -160,25 +160,47 @@ resource "random_uuid" "job_schedule_id" {
 }
 
 # https://learn.microsoft.com/azure/templates/microsoft.automation/automationaccounts/jobschedules
-resource "azapi_resource" "job_schedule" {
-  type      = "Microsoft.Automation/automationAccounts/jobSchedules@2024-10-23"
-  name      = random_uuid.job_schedule_id.result
-  parent_id = var.automation_account_id
+# Uses local-exec instead of azapi_resource because Azure Automation jobSchedules
+# have eventual consistency — the read-back GET after a successful PUT often returns
+# 404 before the resource fully propagates, which causes azapi_resource to fail.
+resource "terraform_data" "job_schedule" {
+  triggers_replace = [
+    azapi_resource.runbook.name,
+    azapi_resource.schedule.name,
+    jsonencode(var.target_subscription_ids),
+    var.storage_account_resource_id,
+    var.container_name
+  ]
 
-  body = {
-    properties = {
-      runbook = {
-        name = azapi_resource.runbook.name
-      }
-      schedule = {
-        name = azapi_resource.schedule.name
-      }
-      parameters = {
-        subscriptionids          = jsonencode(var.target_subscription_ids)
-        storageaccountresourceid = var.storage_account_resource_id
-        containername            = var.container_name
-      }
-    }
+  provisioner "local-exec" {
+    interpreter = ["pwsh", "-Command"]
+    command     = <<-EOT
+      $guid = "${random_uuid.job_schedule_id.result}"
+      $body = @{
+        properties = @{
+          runbook    = @{ name = "${azapi_resource.runbook.name}" }
+          schedule   = @{ name = "${azapi_resource.schedule.name}" }
+          parameters = @{
+            subscriptionids          = '${jsonencode(var.target_subscription_ids)}'
+            storageaccountresourceid = '${var.storage_account_resource_id}'
+            containername            = '${var.container_name}'
+          }
+        }
+      } | ConvertTo-Json -Depth 10 -Compress
+      az rest --method PUT `
+        --url "https://management.azure.com${var.automation_account_id}/jobSchedules/$($guid)?api-version=2024-10-23" `
+        --body $body
+      if ($LASTEXITCODE -ne 0) { throw "Failed to create job schedule" }
+      Write-Host "Created job schedule $guid"
+    EOT
+  }
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["pwsh", "-Command"]
+    command     = <<-EOT
+      Write-Host "Skipping job schedule destroy (cleaned up with schedule deletion)"
+    EOT
   }
 
   depends_on = [terraform_data.runbook_content]
