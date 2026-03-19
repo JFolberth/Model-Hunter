@@ -187,9 +187,9 @@ When `-StorageAccountResourceId` is omitted, reports are saved locally to `./out
 
 ### Azure Automation Runtime Environment (CRITICAL)
 
-- The runtime environment (`PowerShell-74`) uses `defaultPackages = { Az = "12.3.0" }` which bundles **all** Az sub-modules (Az.Accounts, Az.Storage, Az.ResourceGraph, Az.CostManagement, etc.).
-- **Do NOT add separate package resources** for Az sub-modules already included in the Az meta-module — this causes version conflicts and "module could not be loaded" errors.
-- Only add separate package resources for modules **not** included in the Az meta-module.
+- The runtime environment (`PowerShell-74`) uses `defaultPackages = { Az = "12.3.0" }` which bundles core modules like Az.Accounts and Az.Storage.
+- **Az.ResourceGraph and Az.CostManagement are NOT auto-unpacked** by `defaultPackages` — they must be installed as separate package resources in the runtime environment.
+- **Do NOT add Az.Storage as a separate package** — it IS bundled by `defaultPackages` and adding it individually causes version conflicts ("module could not be loaded").
 - The `runbookType` must be `"PowerShell"` (not `"PowerShell72"`) when using runtime environments.
 - `#requires -Modules` is forbidden — it causes silent crashes (zero streams) in Azure Automation.
 
