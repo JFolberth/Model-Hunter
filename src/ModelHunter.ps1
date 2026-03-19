@@ -320,11 +320,15 @@ resources
             $connResp = Invoke-AzRestMethod -Uri $connUrl -Method GET -ErrorAction Stop
             if ($connResp.StatusCode -eq 200) {
                 $connections = ($connResp.Content | ConvertFrom-Json).value
+                Write-Host "  Project '$($proj.name)': $($connections.Count) connection(s)"
                 foreach ($conn in $connections) {
                     $target = $null
                     if ($conn.properties -and $conn.properties.target) {
                         $target = $conn.properties.target
                     }
+                    # Log all connections for diagnostic visibility
+                    $connCategory = if ($conn.properties.category) { $conn.properties.category } else { 'unknown' }
+                    Write-Host "    Connection '$($conn.name)' (category=$connCategory) target=$target"
                     if ($target) {
                         $gw = Get-GatewayUrl -EndpointUrl $target
                         if ($gw) {
@@ -338,11 +342,14 @@ resources
                                     $projectGatewayMap[$acctKey] = $gw
                                 }
                             }
-                            Write-Host "  Gateway found for project '$($proj.name)': $gw"
+                            Write-Host "    ** Gateway detected: $gw"
                             break
                         }
                     }
                 }
+            }
+            else {
+                Write-Warning "  Connections query for '$($proj.name)' returned HTTP $($connResp.StatusCode)"
             }
         }
         catch {
