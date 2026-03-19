@@ -1,0 +1,35 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ── Build, Test, Lint (reusable) ──
+  build:
+    name: Build
+    uses: ./.github/workflows/_build.yml
+
+  # ── Deploy to Dev (auto) ──
+  deploy-dev:
+    name: Deploy Dev
+    needs: build
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      environment: dev
+      tf_var_file: environments/dev.tfvars
+      tf_state_key: model-hunter-dev.tfstate
+
+  # ── Deploy to Prod (manual approval via GitHub Environment) ──
+  deploy-prod:
+    name: Deploy Prod
+    needs: deploy-dev
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      environment: prod
+      tf_var_file: environments/prod.tfvars
+      tf_state_key: model-hunter-prod.tfstate

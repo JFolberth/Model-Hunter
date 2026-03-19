@@ -1,0 +1,63 @@
+name: Build
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── PowerShell / Pester Tests ──
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          Install-Module -Name Pester -MinimumVersion 5.0 -Force -Scope CurrentUser
+          $result = Invoke-Pester ./tests -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) {
+            throw "$($result.FailedCount) test(s) failed."
+          }
+
+      # ── Terraform Formatting ──
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform fmt check
+        working-directory: infra
+        run: terraform fmt -recursive -check
+
+      - name: Terraform validate
+        working-directory: infra
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      # ── TFLint ──
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+
+      - name: Init TFLint
+        working-directory: infra
+        run: tflint --init
+
+      - name: Run TFLint
+        working-directory: infra
+        run: tflint --recursive
+
+      # ── Publish Artifacts ──
+      - name: Upload infra artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: infra
+          path: infra/
+          include-hidden-files: true
+
+      - name: Upload src artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: src
+          path: src/

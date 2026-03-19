@@ -1,0 +1,77 @@
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "GitHub Environment to deploy to (dev, prod)"
+        required: true
+        type: string
+      tf_var_file:
+        description: "Path to the environment tfvars file (relative to infra/)"
+        required: true
+        type: string
+      tf_state_key:
+        description: "Terraform state file key in the backend"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    env:
+      ARM_USE_OIDC: true
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+    steps:
+      - name: Download infra artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: infra
+          path: infra
+
+      - name: Download src artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: src
+          path: src
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: infra
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=rg-terraformstate-dev-eus" \
+            -backend-config="storage_account_name=saterraformstatedeveus" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ inputs.tf_state_key }}"
+
+      - name: Terraform Plan
+        working-directory: infra
+        run: |
+          terraform plan \
+            -var-file="${{ inputs.tf_var_file }}" \
+            -var="target_subscription_ids=${{ vars.TARGET_SUBSCRIPTION_IDS }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: infra
+        run: terraform apply -auto-approve tfplan
